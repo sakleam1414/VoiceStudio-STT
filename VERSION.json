@@ -1,7 +1,7 @@
 {
-  "release_version": "1.5.2",
-  "server_version": "1.5.1",
-  "microphone_version": "2.4.1",
-  "subtitles_version": "1.8.1",
+  "release_version": "1.6.0",
+  "server_version": "1.6.0",
+  "microphone_version": "2.5.0",
+  "subtitles_version": "1.9.0",
   "repository": "sakleam1414/VoiceStudio-STT"
 }

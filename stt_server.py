@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.5.1"
+SERVER_VERSION = "1.6.0"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -91,7 +91,7 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.5.1</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.6.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -136,10 +136,11 @@ subtitle_inbox = deque(maxlen=100)
 tailscale_peers_cache = set()
 tailscale_peers_cache_at = 0.0
 tailscale_peer_records_cache = []
+tailscale_self_addresses = []
 
 
 def get_tailscale_peer_records():
-    global tailscale_peers_cache, tailscale_peer_records_cache, tailscale_peers_cache_at
+    global tailscale_peers_cache, tailscale_peer_records_cache, tailscale_peers_cache_at, tailscale_self_addresses
     now = time.monotonic()
     if now - tailscale_peers_cache_at < 10:
         return tailscale_peer_records_cache
@@ -167,6 +168,15 @@ def get_tailscale_peer_records():
     status = json.loads(result.stdout)
     if status.get("BackendState") != "Running":
         raise RuntimeError(f"Tailscale не подключён ({status.get('BackendState', 'нет состояния')})")
+
+    tailscale_self_addresses = []
+    for address in (status.get("Self") or {}).get("TailscaleIPs", []):
+        try:
+            ip = ipaddress.ip_address(address)
+            if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
+                tailscale_self_addresses.append(str(ip))
+        except ValueError:
+            pass
 
     peer_records = []
     peers = status.get("Peer") or {}
@@ -197,8 +207,6 @@ def get_online_tailscale_ips():
 def is_tailscale_source(address):
     if address is None:
         return False
-    if str(address) in get_online_tailscale_ips():
-        return True
     try:
         ip = ipaddress.ip_address(address)
         return ip in ipaddress.ip_network("100.64.0.0/10") or ip in ipaddress.ip_network("fd7a:115c:a1e0::/48")
@@ -418,7 +426,7 @@ async def handle_subtitle_http(reader, writer):
                 return
             await send_http_response(writer, 204, b"", "text/plain")
             return
-        if path in ("/", "/status", "/register", "/inbox", "/peers") and not is_loopback:
+        if path in ("/", "/status", "/register", "/inbox", "/peers", "/network") and not is_loopback:
             await send_http_response(writer, 403, {"error": "local access required"})
             return
         if path in ("/ping", "/subtitle") and not is_loopback:
@@ -437,11 +445,18 @@ async def handle_subtitle_http(reader, writer):
             await send_http_response(writer, 200, {"ok": True, "userId": subtitle_user_id, "protocol": 1})
         elif method == "GET" and path == "/peers":
             try:
-                addresses = sorted(record["address"] for record in get_tailscale_peer_records())
+                records = await asyncio.to_thread(get_tailscale_peer_records)
+                addresses = sorted(record["address"] for record in records)
             except (OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
                 await send_http_response(writer, 503, {"error": str(error)})
                 return
             await send_http_response(writer, 200, {"ok": True, "addresses": addresses})
+        elif method == "GET" and path == "/network":
+            try:
+                await asyncio.to_thread(get_tailscale_peer_records)
+                await send_http_response(writer, 200, {"ok": True, "addresses": tailscale_self_addresses, "port": SUBTITLE_PORT})
+            except (OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+                await send_http_response(writer, 503, {"error": str(error)})
         elif method == "GET" and path == "/inbox":
             messages = list(subtitle_inbox)
             subtitle_inbox.clear()

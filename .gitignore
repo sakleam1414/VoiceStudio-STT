@@ -13,3 +13,6 @@ release/
 *.zip
 build-log.txt
 build-log-*.txt
+stt_peers.json
+stt_peers.json.tmp
+*.config.json

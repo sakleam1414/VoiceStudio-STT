@@ -1,7 +1,7 @@
 /**
  * @name Microphone
  * @author Codex
- * @version 2.4.1
+ * @version 2.5.0
  * @description Локальная передача микрофона в Vosk, Whisper, wav2vec2 или GigaAM и отображение распознанной речи в субтитрах.
  */
 const fs = require("fs");
@@ -20,6 +20,8 @@ const UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
 module.exports = class Microphone {
     start() {
         this.stop();
+        // The shared file may have been replaced together with this plugin.
+        if (require.cache && require.resolve) delete require.cache[require.resolve("./stt_updates")];
         this.isRecording = false;
         this.audioContext = null;
         this.mediaStream = null;
@@ -276,8 +278,9 @@ module.exports = class Microphone {
             <button type="button" class="mic-btn mic-btn-primary" id="mic-toggle-btn" data-recording="false">
                 Начать распознавание
             </button>
+            <button type="button" class="mic-btn" id="mic-network-btn">Мой адрес и адреса друзей</button>
             <button type="button" class="mic-btn" id="mic-update-btn">Проверить обновление</button>
-            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.4.1</span></div>
+            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.5.0</span></div>
         `;
 
         const savedPos = BdApi.Data.load("Microphone", "panelPosition");
@@ -320,6 +323,7 @@ module.exports = class Microphone {
         };
 
         this.toggleBtn.onclick = () => this.toggleRecording();
+        this.panel.querySelector("#mic-network-btn").onclick = () => require("./stt_updates").showNetwork(__dirname);
         this.panel.querySelector("#mic-update-btn").onclick = () => require("./stt_updates").show(__dirname, "microphone");
         this.renderCatalog();
     }
@@ -701,50 +705,20 @@ module.exports = class Microphone {
     }
 
     async bridgeSubtitleToPeers(payload) {
-        if (this.subtitleBridgeRequest) return this.subtitleBridgeRequest;
-        this.subtitleBridgeRequest = (async () => {
-            try {
-                await this.registerSubtitlePeer(payload.userId);
-                const now = Date.now();
-                if (now - this.subtitleBridgePeersAt > 10000) {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 2500);
-                    let response;
-                    try {
-                        response = await fetch(`http://127.0.0.1:${this.subtitleBridgePort}/peers`, { signal: controller.signal });
-                    } finally {
-                        clearTimeout(timeout);
-                    }
-                    const result = await response.json().catch(() => ({}));
-                    if (!response.ok || !Array.isArray(result.addresses)) throw new Error(result.error || `Список Tailscale недоступен (${response.status})`);
-                    this.subtitleBridgePeers = [...new Set(result.addresses.filter(address => typeof address === "string" && address))];
-                    this.subtitleBridgePeersAt = now;
-                }
-                await Promise.all(this.subtitleBridgePeers.map(async address => {
-                    const host = address.includes(":") ? `[${address}]` : address;
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 2500);
-                    try {
-                        const response = await fetch(`http://${host}:${this.subtitleBridgePort}/subtitle`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(payload),
-                            signal: controller.signal
-                        });
-                        if (!response.ok) console.warn(`[Microphone] Сервер субтитров ${address} отклонил текст (${response.status}).`);
-                    } catch (error) {
-                        console.warn(`[Microphone] Не удалось отправить текст на ${address}:`, error.message);
-                    } finally {
-                        clearTimeout(timeout);
-                    }
-                }));
-            } catch (error) {
-                console.warn("[Microphone] Прямой мост субтитров недоступен:", error.message);
-            } finally {
-                this.subtitleBridgeRequest = null;
-            }
-        })();
-        return this.subtitleBridgeRequest;
+        // Keep final phrases in order even while a peer is slow to respond.
+        const previous = this.subtitleBridgeRequest || Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            await this.registerSubtitlePeer(payload.userId);
+            const channelId = BdApi.Webpack.getStore("SelectedChannelStore")?.getVoiceChannelId?.();
+            if (!channelId) return;
+            const states = BdApi.Webpack.getStore("VoiceStateStore")?.getVoiceStatesForChannel?.(channelId);
+            const voiceStates = states instanceof Map ? [...states.values()] : Object.values(states || {});
+            const ids = voiceStates.map(state => state.userId || state.user_id).filter(Boolean);
+            await require("./stt_updates").network(__dirname).send(payload, ids);
+        }).catch(error => console.warn("[Microphone] Связь с друзьями:", error.message));
+        this.subtitleBridgeRequest = operation;
+        try { await operation; }
+        finally { if(this.subtitleBridgeRequest === operation) this.subtitleBridgeRequest = null; }
     }
 
     async startRecording() {

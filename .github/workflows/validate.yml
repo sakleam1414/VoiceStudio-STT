@@ -11,12 +11,14 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m py_compile stt_server.py
+      - run: python tools/test-server-network.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: node --check microphone.plugin.js
       - run: node --check subtitles.plugin.js
       - run: node --check stt_updates.js
+      - run: node tools/test-network.cjs
   updater:
     runs-on: windows-latest
     steps:

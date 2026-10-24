@@ -1,7 +1,7 @@
 /**
  * @name Subtitles
  * @author Codex
- * @version 1.8.1
+ * @version 1.9.0
  * @description Чистые субтитры. ЛКМ — окно субтитров, ПКМ — участники и автоматический поиск устройств.
  */
 const SUBTITLES_UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
@@ -9,6 +9,7 @@ const SUBTITLES_UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
 module.exports = class Subtitles {
     start() {
         this.stop();
+        if (require.cache && require.resolve) delete require.cache[require.resolve("./stt_updates")];
         window.__bdSubtitlesActive = (window.__bdSubtitlesActive || 0) + 1;
         this.isSubtitlePluginActive = true;
         const savedUsers = BdApi.Data.load("Subtitles", "selectedUsers");
@@ -254,34 +255,15 @@ module.exports = class Subtitles {
     }
 
     async refreshTailscalePeers() {
-        if (this.peerRefreshInProgress) return;
-        this.peerRefreshInProgress = true;
-        try {
-            const response = await this.requestSubtitleService("/peers");
-            const result = await response.json();
-            if (!response.ok || !Array.isArray(result.addresses)) {
-                throw new Error(result.error || `Не удалось получить список Tailscale-устройств (${response.status})`);
-            }
-            this.tailscalePeerAddresses = [...new Set(result.addresses)];
-            const discovered = await Promise.all(this.tailscalePeerAddresses.map(address => this.fetchPeerInfo(address)));
-            const mappedPeers = new Map();
-            for (const peer of discovered.filter(Boolean)) {
-                const addresses = mappedPeers.get(peer.userId) || [];
-                addresses.push(peer.address);
-                mappedPeers.set(peer.userId, addresses);
-            }
-            this.tailscalePeers = mappedPeers;
-            this.peerDiscoveryMessage = this.tailscalePeerAddresses.length && this.tailscalePeers.size === 0
-                ? `Tailscale видит ${this.tailscalePeerAddresses.length} устройство, но порт ${this.port} не отвечает. Проверь сервер друга и брандмауэр Windows.`
+        const result = await require("./stt_updates").network(__dirname).refresh();
+        this.tailscalePeers = new Map([...result.peers].map(([id, peers]) => [id, peers.map(peer => peer.address)]));
+        this.peerSources = new Map([...result.peers].map(([id, peers]) => [id, peers[0]?.source]));
+        this.tailscalePeerAddresses = result.addresses;
+        this.peerDiscoveryMessage = result.discoveryError && !result.peers.size
+            ? `Автопоиск: ${result.discoveryError}. Можно указать адрес друга вручную.`
+            : result.addresses.length && !result.peers.size
+                ? "Устройства найдены, но серверы не отвечают. Проверьте сервер друга или укажите его адрес."
                 : null;
-        } catch (error) {
-            this.tailscalePeers = new Map();
-            this.tailscalePeerAddresses = [];
-            this.peerDiscoveryMessage = null;
-            throw error;
-        } finally {
-            this.peerRefreshInProgress = false;
-        }
     }
 
     renderSubtitleServerStatus() {
@@ -320,9 +302,10 @@ module.exports = class Subtitles {
     async fetchPeerInfo(address) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 1500);
-        const host = address.includes(":") ? `[${address}]` : address;
+        const base = address === "127.0.0.1" ? `http://127.0.0.1:${this.port}`
+            : require("./stt_updates").parsePeerAddress(address).url;
         try {
-            const response = await fetch(`http://${host}:${this.port}/ping`, { signal: controller.signal });
+            const response = await fetch(`${base}/ping`, { signal: controller.signal });
             if (!response.ok) return null;
             const peer = await response.json();
             return peer?.ok && peer.protocol === 1 && typeof peer.userId === "string"
@@ -340,30 +323,9 @@ module.exports = class Subtitles {
         if (!channelId) return;
         const states = BdApi.Webpack.getStore("VoiceStateStore")?.getVoiceStatesForChannel?.(channelId);
         const voiceStates = states instanceof Map ? [...states.values()] : Object.values(states || {});
-        const participantIds = new Set(voiceStates.map(state => state.userId || state.user_id).filter(Boolean));
-        participantIds.delete(payload.userId);
-        const addresses = [...new Set([...participantIds]
-            .flatMap(userId => this.tailscalePeers.get(userId) || []))];
-        await Promise.all(addresses.map(async address => {
-            const host = address.includes(":") ? `[${address}]` : address;
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 2000);
-            try {
-                const response = await fetch(`http://${host}:${this.port}/subtitle`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                    signal: controller.signal
-                });
-                if (!response.ok) {
-                    console.warn(`[Subtitles] Удалённый компьютер отклонил субтитр (${response.status}).`);
-                }
-            } catch (error) {
-                console.warn(`[Subtitles] Не удалось отправить субтитр участнику ${address}:`, error.message);
-            } finally {
-                clearTimeout(timeout);
-            }
-        }));
+        const ids = voiceStates.map(state => state.userId || state.user_id).filter(Boolean);
+        try { await require("./stt_updates").network(__dirname).send(payload, ids); }
+        catch(error) { this.reportServiceError(error); }
     }
 
     createPreview() {
@@ -528,9 +490,13 @@ module.exports = class Subtitles {
         const updates = document.createElement("button");
         updates.type = "button";
         updates.className = "subtitles-network-refresh";
-        updates.textContent = "Обновление Subtitles · 1.8.1";
+        updates.textContent = "Обновление Subtitles · 1.9.0";
         updates.onclick = () => require("./stt_updates").show(__dirname, "subtitles");
-        this.participantMenu.append(updates);
+        const network = document.createElement("button");
+        network.type = "button"; network.className = "subtitles-network-refresh";
+        network.textContent = "Мой адрес и адреса друзей";
+        network.onclick = () => require("./stt_updates").showNetwork(__dirname);
+        this.participantMenu.append(network, updates);
 
         const serverStatus = document.createElement("div");
         serverStatus.className = "subtitles-server-status";
@@ -618,6 +584,15 @@ module.exports = class Subtitles {
             };
 
             row.append(presence, avatar, info);
+            if (!isSelf) {
+                const address = document.createElement("button");
+                address.type = "button";
+                address.className = "subtitles-network-refresh";
+                address.textContent = "Адрес";
+                address.setAttribute("aria-label", `Адрес друга: ${user.globalName || user.username || "Участник"}`);
+                address.onclick = () => require("./stt_updates").showNetwork(__dirname, {userId: user.id, name: user.globalName || user.username || "Участник"});
+                row.append(address);
+            }
             row.append(captions);
             this.participantMenu.append(row);
             rows.set(user.id, { row, captions, presence });
@@ -664,11 +639,11 @@ module.exports = class Subtitles {
             else this.offlineUsers.add(user.id);
 
             const labels = {
-                online: isSelfRow(user) ? "Сервер субтитров работает на этом ПК" : "Устройство и сервер субтитров доступны",
+                online: isSelfRow(user) ? "Сервер субтитров работает на этом ПК" : (this.peerSources?.get(user.id) === "manual" ? "На связи · ручной адрес" : "На связи · найден автоматически"),
                 offline: isSelfRow(user) ? "Сервер субтитров не отвечает на этом ПК" : "Устройство недоступно или сервер субтитров не запущен",
                 unknown: isSelfRow(user)
                     ? (peerDiscoveryError || "Не удалось проверить сервер на этом ПК")
-                    : (peerDiscoveryError || "Устройство не найдено или плагин субтитров не запущен")
+                    : (peerDiscoveryError || "Друг не найден. Нажмите «Адрес» или проверьте его сервер.")
             };
             this.setParticipantState(row, state, labels[state]);
             presence.textContent = online ? "✓" : state === "unknown" ? "●" : "×";
