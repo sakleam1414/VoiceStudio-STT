@@ -29,6 +29,7 @@ def main():
         # Run the production main and normal SystemExit in a separate interpreter.
         wrapper = folder/'simulate_window_close.py'
         wrapper.write_text('''import stt_server, sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 def closed_window():
     Path(__file__).with_name('window-closed').write_text('closed')
