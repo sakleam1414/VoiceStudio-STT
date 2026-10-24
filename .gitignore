@@ -12,3 +12,4 @@ release/
 *.exe
 *.zip
 build-log.txt
+build-log-*.txt
