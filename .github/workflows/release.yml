@@ -28,8 +28,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
+          $archives = @(Get-ChildItem ./release/STT-for-friend-*.zip)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one release ZIP' }
           gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) { gh release create $tag --title "Voice Studio $tag" --generate-notes }
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --draft --title "Voice Studio $tag" --notes-file ./release/release-notes.md }
           if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
-          gh release upload $tag ./release/* --clobber
+          gh release upload $tag $archives[0].FullName --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Asset upload failed' }
+          gh release edit $tag --notes-file ./release/release-notes.md --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

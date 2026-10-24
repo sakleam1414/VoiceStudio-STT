@@ -79,6 +79,12 @@ def package(exe, output, versions):
     with zipfile.ZipFile(archive) as bundle:
         assert bundle.testzip() is None
         for name in names: assert bundle.read(name) == (output/name).read_bytes()
+    # Checking versions needs only the release API, not another ZIP download.
+    metadata = dict(manifest, archive={'name': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()})
+    notes = ('Скачайте один ZIP и распакуйте целиком в папку BetterDiscord `plugins`.\n\n'
+             'Запуск: `stt_server.exe`. Настройки и модели при обновлении сохраняются.\n\n'
+             '<!-- voice-studio-manifest\n' + json.dumps(metadata, separators=(',', ':')) + '\n-->\n')
+    (output / 'release-notes.md').write_text(notes, encoding='utf-8')
     print(f'Verified release: {archive}')
 
 if __name__ == '__main__':

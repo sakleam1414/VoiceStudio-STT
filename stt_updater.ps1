@@ -97,11 +97,38 @@ function Get-UpdatePlan([string]$Root, $Manifest, [string]$Selection) {
     return @{components=$components;files=@($files.Values);available=($files.Count -gt 0)}
 }
 
+function Get-ArchiveRelease($Release, [string]$Repo) {
+    $match = [regex]::Match([string]$Release.body, '(?s)<!-- voice-studio-manifest\s*(\{.*?\})\s*-->')
+    if (-not $match.Success) { throw 'Release has no ZIP update metadata' }
+    $manifest = $match.Groups[1].Value | ConvertFrom-Json
+    if ($manifest.schema -ne 1 -or $manifest.archive.name -notmatch '^STT-for-friend-\d+\.\d+\.\d+\.zip$' -or $manifest.archive.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid ZIP update metadata' }
+    $assets = @($Release.assets | Where-Object name -eq $manifest.archive.name)
+    $expected = "https://github.com/$Repo/releases/download/$($Release.tag_name)/$($manifest.archive.name)"
+    if ($assets.Count -ne 1 -or $assets[0].browser_download_url -ne $expected) { throw 'Release ZIP is missing' }
+    return @{manifest=$manifest;url=$expected}
+}
+
+function Expand-CheckedArchive([string]$Archive, [string]$Stage, $Files, [string]$ExpectedHash) {
+    if ((Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $ExpectedHash) { throw 'ZIP SHA256 mismatch' }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        # Read only whitelisted root entries; no archive paths are used for extraction.
+        foreach ($file in $Files) {
+            $entries = @($zip.Entries | Where-Object { $_.FullName -ceq $file.name })
+            if ($entries.Count -ne 1 -or $file.name -notmatch '^[a-zA-Z0-9_.-]+$' -or $entries[0].Length -gt 200MB) { throw 'Invalid ZIP entry' }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], (Join-Path $Stage $file.name), $true)
+            if ((Get-FileHash -LiteralPath (Join-Path $Stage $file.name) -Algorithm SHA256).Hash -ne $file.sha256) { throw "SHA256 mismatch: $($file.name)" }
+        }
+    } finally { $zip.Dispose() }
+}
+
 if ($LibraryOnly) { return }
 $client = $null
 $mutex = $null
 $ownsMutex = $false
 $restart = $false
+$stage = $null
 try {
     if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid repository' }
     $Directory = [IO.Path]::GetFullPath($Directory)
@@ -109,10 +136,8 @@ try {
     $headers = @{'User-Agent'='VoiceStudio-STT';Accept='application/vnd.github+json'}
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $release = Invoke-RestMethod -Uri $api -Headers $headers -TimeoutSec 20
-    $base = "https://github.com/$Repository/releases/download/$($release.tag_name)/"
-    $asset = @($release.assets | Where-Object {$_.name -eq 'update-manifest.json'})
-    if ($asset.Count -ne 1 -or $asset[0].browser_download_url -ne ($base+'update-manifest.json')) { throw 'Release has no update manifest' }
-    $manifest = Invoke-RestMethod -Uri $asset[0].browser_download_url -Headers $headers -TimeoutSec 20
+    $bundle = Get-ArchiveRelease $release $Repository
+    $manifest = $bundle.manifest
     $plan = Get-UpdatePlan $Directory $manifest $Component
     $files = @($plan.files)
     $result = @{available=$plan.available;components=$plan.components;component=$Component;url=$release.html_url}
@@ -134,13 +159,9 @@ try {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     $client = [Net.WebClient]::new()
     $client.Headers['User-Agent'] = 'VoiceStudio-STT'
-    foreach ($file in $files) {
-        $download = @($release.assets | Where-Object {$_.name -eq $file.name})
-        if ($download.Count -ne 1 -or $download[0].browser_download_url -ne ($base + $file.name)) { throw "Missing release asset: $($file.name)" }
-        $target = Join-Path $stage $file.name
-        $client.DownloadFile($download[0].browser_download_url, $target)
-        if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $file.sha256) { throw "SHA256 mismatch: $($file.name)" }
-    }
+    $archive = Join-Path $stage 'release.zip'
+    $client.DownloadFile($bundle.url, $archive)
+    Expand-CheckedArchive $archive $stage $files $manifest.archive.sha256
     if ($plan.components.ContainsKey('server') -and $plan.components.server.available) {
         # Downloads and checks complete first. Only stop this installation.
         $exe = Join-Path $Directory 'stt_server.exe'
@@ -166,4 +187,7 @@ try {
     if ($ownsMutex) { $mutex.ReleaseMutex() }
     if ($mutex) { $mutex.Dispose() }
     if ($client) { $client.Dispose() }
+    if ($stage -and [IO.Directory]::Exists($stage)) {
+        try { [IO.Directory]::Delete($stage, $true) } catch { }
+    }
 }

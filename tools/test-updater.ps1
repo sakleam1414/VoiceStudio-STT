@@ -43,3 +43,37 @@ if (@($plan.files | Where-Object name -eq 'stt_updates.js').Count -ne 1) {throw 
 $manifest.components.subtitles.files[1]=@{name='stt_updates.js';sha256=('f'*64)}
 try {Get-UpdatePlan $installed $manifest 'all'; throw 'Conflicting hashes accepted'} catch {if ($_.Exception.Message -eq 'Conflicting hashes accepted') {throw}}
 Write-Output 'PASS: all-component plan, outdated-only selection, current server/Subtitles skipped, shared deduplication and conflict rejection'
+
+# ZIP updates download one archive and extract only selected files.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipSource = Join-Path $testRoot 'zip-source'
+$zipStage = Join-Path $testRoot 'zip-stage'
+New-Item -ItemType Directory -Path $zipSource,$zipStage | Out-Null
+[IO.File]::WriteAllText((Join-Path $zipSource 'microphone.plugin.js'), '/** @version 2.7.1 */ zipped')
+[IO.File]::WriteAllText((Join-Path $zipSource 'subtitles.plugin.js'), 'must remain untouched')
+[IO.File]::WriteAllText((Join-Path $zipSource 'Microphone.config.json'), 'must never be extracted')
+$archive = Join-Path $testRoot 'release.zip'
+[IO.Compression.ZipFile]::CreateFromDirectory($zipSource, $archive)
+$digest = (Get-FileHash -LiteralPath $archive).Hash
+$file = @{name='microphone.plugin.js';sha256=(Get-FileHash (Join-Path $zipSource 'microphone.plugin.js')).Hash}
+Expand-CheckedArchive $archive $zipStage @($file) $digest
+if (@(Get-ChildItem -LiteralPath $zipStage).Count -ne 1) {throw 'Unselected ZIP files extracted'}
+Install-StagedFiles $installed $zipStage @($file) | Out-Null
+if ((Get-ComponentVersion $installed 'microphone') -ne [version]'2.7.1') {throw 'ZIP install failed'}
+try {Expand-CheckedArchive $archive $zipStage @($file) ('0'*64); throw 'Bad ZIP hash accepted'} catch {if ($_.Exception.Message -eq 'Bad ZIP hash accepted') {throw}}
+$badFile = @{name='microphone.plugin.js';sha256=('0'*64)}
+try {Expand-CheckedArchive $archive $zipStage @($badFile) $digest; throw 'Bad entry hash accepted'} catch {if ($_.Exception.Message -eq 'Bad entry hash accepted') {throw}}
+$meta = @{schema=1;archive=@{name='STT-for-friend-1.8.2.zip';sha256=$digest}}
+$release = @{tag_name='v1.8.2';body=('<!-- voice-studio-manifest' + "`n" + ($meta | ConvertTo-Json -Depth 8 -Compress) + "`n-->");assets=@(@{name=$meta.archive.name;browser_download_url='https://github.com/test/repo/releases/download/v1.8.2/STT-for-friend-1.8.2.zip'})}
+$bundle=Get-ArchiveRelease $release 'test/repo'
+if ($bundle.manifest.archive.sha256 -ne $digest) {throw 'ZIP metadata not parsed'}
+$release.assets[0].browser_download_url='https://example.com/other.zip'
+try {Get-ArchiveRelease $release 'test/repo'; throw 'Foreign ZIP URL accepted'} catch {if ($_.Exception.Message -eq 'Foreign ZIP URL accepted') {throw}}
+$release.body='no metadata'
+try {Get-ArchiveRelease $release 'test/repo'; throw 'Missing metadata accepted'} catch {if ($_.Exception.Message -eq 'Missing metadata accepted') {throw}}
+# Duplicate root names are ambiguous and must be rejected.
+$zip=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Update)
+try {$zip.CreateEntry('microphone.plugin.js') | Out-Null} finally {$zip.Dispose()}
+$digest=(Get-FileHash -LiteralPath $archive).Hash
+try {Expand-CheckedArchive $archive $zipStage @($file) $digest; throw 'Duplicate entry accepted'} catch {if ($_.Exception.Message -eq 'Duplicate entry accepted') {throw}}
+Write-Output 'PASS: single ZIP metadata, selected extraction/install, config preservation, archive/entry hashes, foreign URLs, duplicate entries'
