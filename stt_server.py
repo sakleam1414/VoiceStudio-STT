@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import socket
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.9.1"
+SERVER_VERSION = "1.10.0"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -92,7 +93,7 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.9.1</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.10.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -141,6 +142,121 @@ tailscale_self_addresses = []
 radmin_addresses_cache = []
 radmin_addresses_cache_at = 0.0
 radmin_addresses_lock = threading.Lock()
+RADMIN_DISCOVERY_PORT = 8766
+radmin_discovered_peers = {}
+radmin_discovery_ready = set()
+radmin_discovery_lock = threading.Lock()
+
+
+def get_radmin_discovered_peers():
+    now = time.monotonic()
+    with radmin_discovery_lock:
+        expired = [ip for ip, record in radmin_discovered_peers.items() if now - record["seen"] > 45]
+        for ip in expired:
+            del radmin_discovered_peers[ip]
+        return [{"address": record["address"], "online": True, "vpn": "radmin"} for record in radmin_discovered_peers.values()]
+
+
+class RadminDiscoveryProtocol(asyncio.DatagramProtocol):
+    """Small UDP advertisements, scoped to the Radmin adapter. No credentials or speech."""
+    def __init__(self, local_ip, http_port):
+        self.local_ip, self.http_port = local_ip, http_port
+        self.transport = None
+        self.nonce = None
+        self.nonce_at = 0.0
+        self.replied = {}
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def packet(self, kind, nonce):
+        return json.dumps({"app": "VoiceStudio", "v": 1, "type": kind, "nonce": nonce, "port": self.http_port}).encode("ascii")
+
+    def discover(self):
+        self.nonce, self.nonce_at = secrets.token_hex(12), time.monotonic()
+        self.transport.sendto(self.packet("discover", self.nonce), ("26.255.255.255", RADMIN_DISCOVERY_PORT))
+
+    def datagram_received(self, data, remote):
+        if len(data) > 512 or remote[0] == self.local_ip:
+            return
+        try:
+            ip = ipaddress.ip_address(remote[0])
+            if ip.version != 4 or ip not in ipaddress.ip_network("26.0.0.0/8"):
+                return
+            message = json.loads(data)
+            if message.get("app") != "VoiceStudio" or message.get("v") != 1:
+                return
+            nonce, port = message.get("nonce"), message.get("port")
+            if not isinstance(nonce, str) or len(nonce) != 24 or any(c not in "0123456789abcdef" for c in nonce):
+                return
+            if type(port) is not int or not 1 <= port <= 65535:
+                return
+            now = time.monotonic()
+            if message.get("type") == "discover":
+                if now - self.replied.get(str(ip), -100) < 5:
+                    return
+                self.replied = {key: value for key, value in self.replied.items() if now - value < 30}
+                if len(self.replied) >= 256:
+                    return
+                self.replied[str(ip)] = now
+                self.transport.sendto(self.packet("announce", nonce), remote)
+            elif message.get("type") != "announce" or nonce != self.nonce or now - self.nonce_at > 20:
+                return
+            address = str(ip) if port == 8765 else f"{ip}:{port}"
+            with radmin_discovery_lock:
+                if len(radmin_discovered_peers) < 256 or str(ip) in radmin_discovered_peers:
+                    radmin_discovered_peers[str(ip)] = {"address": address, "seen": now}
+        except (ValueError, TypeError, AttributeError, OSError, UnicodeDecodeError):
+            return
+
+    def error_received(self, error):
+        logging.debug("Radmin discovery datagram: %s", error)
+
+
+async def run_radmin_discovery():
+    listeners = {}
+    try:
+        while True:
+            addresses = set(await asyncio.to_thread(get_radmin_self_addresses))
+            for ip in list(listeners):
+                if ip not in addresses:
+                    listeners.pop(ip)[0].close()
+            for ip in addresses - listeners.keys():
+                try:
+                    listener = await asyncio.get_running_loop().create_datagram_endpoint(
+                        lambda address=ip: RadminDiscoveryProtocol(address, SUBTITLE_PORT),
+                        local_addr=(ip, RADMIN_DISCOVERY_PORT), allow_broadcast=True)
+                    listeners[ip] = listener
+                except OSError:
+                    logging.debug("Could not start Radmin discovery", exc_info=True)
+            with radmin_discovery_lock:
+                radmin_discovery_ready.clear()
+                radmin_discovery_ready.update(listeners)
+            for transport, protocol in listeners.values():
+                try:
+                    protocol.discover()
+                except OSError:
+                    logging.debug("Could not broadcast Radmin discovery", exc_info=True)
+            await asyncio.sleep(15)
+    finally:
+        for transport, protocol in listeners.values():
+            transport.close()
+        with radmin_discovery_lock:
+            radmin_discovery_ready.clear()
+            radmin_discovered_peers.clear()
+
+
+def launch_radmin():
+    if sys.platform != "win32":
+        raise RuntimeError("Запуск Radmin доступен только в Windows")
+    candidates = [Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Radmin VPN/RvRvpnGui.exe",
+                  Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Radmin VPN/RvRvpnGui.exe"]
+    executable = next((file for file in candidates if file.is_file()), None)
+    if executable is None:
+        raise RuntimeError("Radmin VPN не установлен. Установите его с radmin-vpn.com")
+    subprocess.Popen([str(executable), "/show"], cwd=executable.parent,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return {"ok": True, "message": "Radmin открыт. Первый раз войдите в сеть VoiceStudio; затем друзья с Voice Studio будут найдены автоматически."}
 
 
 def get_radmin_self_addresses():
@@ -444,7 +560,10 @@ def get_dashboard_status():
         services["tailscale"] = {"state": "inactive", "text": "Недоступен"}
         message = message or str(error)
     radmin = get_radmin_self_addresses()
-    services["radmin"] = {"state": "active" if radmin else "unknown", "text": "Адаптер готов · адрес вручную" if radmin else "Не используется"}
+    with radmin_discovery_lock:
+        discovery_ready = bool(radmin_discovery_ready)
+    radmin_text = f"Автопоиск · устройств: {len(get_radmin_discovered_peers())}" if discovery_ready else "Адаптер готов · адрес вручную"
+    services["radmin"] = {"state": "active" if radmin else "unknown", "text": radmin_text if radmin else "Не используется", "addresses": radmin}
     if radmin:
         message = startup_error or ""
     if sys.platform == "win32":
@@ -526,7 +645,7 @@ async def handle_subtitle_http(reader, writer):
                 return
             await send_http_response(writer, 204, b"", "text/plain")
             return
-        if path in ("/", "/status", "/register", "/inbox", "/peers", "/network") and not is_loopback:
+        if path in ("/", "/status", "/register", "/inbox", "/peers", "/network", "/radmin/open") and not is_loopback:
             await send_http_response(writer, 403, {"error": "local access required"})
             return
         if path in ("/ping", "/subtitle") and not is_loopback:
@@ -543,14 +662,29 @@ async def handle_subtitle_http(reader, writer):
                 await send_http_response(writer, 503, {"ok": False, "error": "plugin is not registered"})
                 return
             await send_http_response(writer, 200, {"ok": True, "userId": subtitle_user_id, "protocol": 1})
+        elif method == "POST" and path == "/radmin/open":
+            try:
+                await send_http_response(writer, 200, await asyncio.to_thread(launch_radmin))
+            except (OSError, RuntimeError) as error:
+                await send_http_response(writer, 503, {"error": str(error)})
         elif method == "GET" and path == "/peers":
+            records = []
+            discovery_error = ""
             try:
                 records = await asyncio.to_thread(get_tailscale_peer_records)
-                addresses = sorted(record["address"] for record in records)
-            except (OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
-                await send_http_response(writer, 503, {"error": str(error)})
+            except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                discovery_error = str(error)
+            radmin = await asyncio.to_thread(get_radmin_self_addresses)
+            if radmin:
+                records += get_radmin_discovered_peers()
+            if discovery_error and not radmin:
+                await send_http_response(writer, 503, {"error": discovery_error})
                 return
-            await send_http_response(writer, 200, {"ok": True, "addresses": addresses})
+            with radmin_discovery_lock:
+                ready = bool(radmin_discovery_ready)
+            await send_http_response(writer, 200, {"ok": True,
+                "addresses": sorted({record["address"] for record in records}),
+                "radmin": {"available": bool(radmin), "discovery": ready}})
         elif method == "GET" and path == "/network":
             addresses = []
             try:
@@ -1276,6 +1410,102 @@ def configure_window_brand(root):
             logging.debug("Dark title bar unavailable", exc_info=True)
 
 
+def load_radmin_settings():
+    try:
+        data = json.loads((APP_DIR / "stt_radmin.config.json").read_text(encoding="utf-8"))
+        return {key: str(data.get(key, ""))[:256] for key in ("name", "password")}
+    except (OSError, ValueError, AttributeError):
+        return {"name": "VoiceStudio", "password": ""}
+
+
+def save_radmin_settings(name, password):
+    # This personal file never enters the release or the discovery protocol.
+    file = APP_DIR / "stt_radmin.config.json"
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=APP_DIR, prefix=".radmin-", delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump({"name": name[:256], "password": password[:256]}, stream, ensure_ascii=False)
+    try:
+        os.replace(temporary, file)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def show_radmin_setup(root):
+    import tkinter as tk
+    existing = getattr(root, "radmin_window", None)
+    if existing is not None and existing.winfo_exists():
+        existing.lift()
+        return existing
+    window = tk.Toplevel(root)
+    root.radmin_window = window
+    window.title("Voice Studio · Radmin VPN")
+    configure_window_brand(window)
+    window.configure(bg="#10131e")
+    window.resizable(False, False)
+    body = tk.Frame(window, bg="#10131e")
+    body.pack(fill="both", expand=True, padx=24, pady=22)
+    tk.Label(body, text="Radmin VPN", fg="#f3f4ff", bg="#10131e", font=("Segoe UI", 17, "bold")).pack(anchor="w")
+    tk.Label(body, text="Первый вход — один раз вручную", fg="#88d5e5", bg="#10131e").pack(anchor="w", pady=(2, 12))
+    tk.Label(body, text="В Radmin: Сеть → Присоединиться к сети. Введите имя и пароль общей сети на каждом ПК. Затем Voice Studio ищет друзей автоматически.", wraplength=440, justify="left", fg="#a6b1c4", bg="#10131e").pack(anchor="w")
+    settings = load_radmin_settings()
+    notice = tk.StringVar(value="Данные сети хранятся только на этом компьютере.")
+    options = {"bg": "#202940", "fg": "#e8edf8", "activebackground": "#2b3851", "activeforeground": "#ffffff", "relief": "flat", "padx": 12, "pady": 7, "cursor": "hand2"}
+
+    def copy(value):
+        if not value:
+            notice.set("Заполните поле или подключите Radmin VPN.")
+            return
+        window.clipboard_clear()
+        window.clipboard_append(value)
+        notice.set("Скопировано.")
+
+    fields = {}
+    for key, label in (("name", "Имя сети"), ("password", "Пароль сети")):
+        tk.Label(body, text=label, fg="#a6b1c4", bg="#10131e").pack(anchor="w", pady=(12, 4))
+        row = tk.Frame(body, bg="#10131e")
+        row.pack(fill="x")
+        value = tk.StringVar(value=settings[key])
+        fields[key] = value
+        tk.Entry(row, textvariable=value, show="•" if key == "password" else "", bg="#1c2435", fg="#f3f4ff", insertbackground="#ffffff", relief="flat", width=32).pack(side="left", fill="x", expand=True, ipady=7)
+        tk.Button(row, text="Копировать", command=lambda item=value: copy(item.get()), **options).pack(side="right", padx=(8, 0))
+    address = tk.StringVar(value="Мой адрес: проверка…")
+    tk.Label(body, textvariable=address, fg="#88d5e5", bg="#10131e").pack(anchor="w", pady=(16, 8))
+    actions = tk.Frame(body, bg="#10131e")
+    actions.pack(fill="x")
+
+    def launch():
+        try:
+            notice.set(launch_radmin()["message"])
+        except (OSError, RuntimeError) as error:
+            notice.set(str(error))
+
+    def save():
+        try:
+            save_radmin_settings(fields["name"].get().strip(), fields["password"].get())
+            notice.set("Сохранено на этом ПК. Вход в сеть выполните в Radmin.")
+        except OSError:
+            notice.set("Не удалось сохранить данные сети.")
+
+    tk.Button(actions, text="Открыть Radmin", command=launch, **options).pack(side="left")
+    tk.Button(actions, text="Скопировать адрес", command=lambda: copy(next(iter(radmin_addresses_cache), "")), **options).pack(side="left", padx=8)
+    tk.Button(actions, text="Сохранить", command=save, **options).pack(side="right")
+    tk.Label(body, textvariable=notice, fg="#a6b1c4", bg="#10131e", wraplength=440, justify="left").pack(anchor="w", pady=(14, 0))
+
+    def refresh_address():
+        address.set("Мой адрес: " + (", ".join(radmin_addresses_cache) or "подключите Radmin VPN"))
+        window.address_timer = window.after(1500, refresh_address)
+
+    def destroy(event):
+        if event.widget is window and getattr(window, "address_timer", None):
+            window.after_cancel(window.address_timer)
+            window.address_timer = None
+
+    window.bind("<Destroy>", destroy, add="+")
+    refresh_address()
+    launch()
+    return window
+
+
 def run_dashboard():
     """Small native status window. Closing it leaves the server running."""
     import tkinter as tk
@@ -1371,6 +1601,7 @@ def run_dashboard():
     release_button = tk.Button(footer, text="Установить", command=open_release, state="disabled", **button_options)
     release_button.pack(side="right")
     tk.Button(footer, text="Проверить ↻", command=refresh, **button_options).pack(side="right", padx=(0, 6))
+    tk.Button(content, text="Radmin: запуск и адрес", command=lambda: show_radmin_setup(root), **button_options).grid(row=3, column=0, sticky="nw", pady=(8, 0))
 
     def read_status():
         with urllib.request.urlopen(f"http://127.0.0.1:{SUBTITLE_PORT}/status", timeout=6) as response:
@@ -1389,6 +1620,8 @@ def run_dashboard():
                 for key in ("stt", "tailscale", "radmin", "subtitles"):
                     value = statuses.get(key, {"state": "unknown", "text": "Не используется"})
                     text = value["text"]
+                    if key == "radmin":
+                        radmin_addresses_cache[:] = value.get("addresses", [])
                     if key == "stt":
                         text += " · автозагрузка: " + ("вкл." if startup_enabled else "выкл." if startup.get("state") == "inactive" else "?")
                     paint(key, value["state"], text)
@@ -1497,6 +1730,7 @@ async def serve(enable_stt=True, enable_subtitles=True, dashboard=False, initial
         await recognize(websocket)
 
     servers = []
+    discovery_task = None
     try:
         if enable_stt:
             servers.append(await websockets.serve(handle_client, HOST, PORT, max_size=1024 * 1024, max_queue=64))
@@ -1509,6 +1743,8 @@ async def serve(enable_stt=True, enable_subtitles=True, dashboard=False, initial
                 limit=16 * 1024,
             ))
             logging.info("Subtitle relay is ready at http://%s:%s", SUBTITLE_HOST, SUBTITLE_PORT)
+            if SUBTITLE_PORT == 8765:
+                discovery_task = asyncio.create_task(run_radmin_discovery())
         if dashboard:
             await asyncio.to_thread(open_dashboard)
         if enable_stt and initial_model is not None:
@@ -1525,6 +1761,9 @@ async def serve(enable_stt=True, enable_subtitles=True, dashboard=False, initial
         for server in servers:
             server.close()
         await asyncio.gather(*(server.wait_closed() for server in servers))
+        if discovery_task is not None:
+            discovery_task.cancel()
+            await asyncio.gather(discovery_task, return_exceptions=True)
 
 
 def main():

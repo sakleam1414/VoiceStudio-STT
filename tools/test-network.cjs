@@ -74,6 +74,24 @@ async function main() {
         fs.writeFileSync(manager.file,'broken JSON');
         assert.throws(()=>manager.save('100.77.1.5','333','another'));
         assert.equal(fs.readFileSync(manager.file,'utf8'),'broken JSON');
+        // An unsaved Radmin address is discovered, verified, and used for delivery.
+        const automaticRadmin = new PeerNetwork(path.join(directory,'radmin-auto'));
+        const fetchBeforeRadmin = global.fetch;
+        global.fetch=async(url,options={})=>{
+            if(url.endsWith('/peers'))return {ok:true,json:async()=>({addresses:['26.10.0.2'],radmin:{available:true,discovery:true}})};
+            if(url.endsWith('/ping'))return {ok:true,json:async()=>({ok:true,userId:'444',protocol:1})};
+            if(url.endsWith('/subtitle')){sends.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true})};}
+            throw Error('Unexpected Radmin endpoint');
+        };
+        sends=[];
+        const discovered=await automaticRadmin.refresh(true);
+        assert.equal(discovered.peers.get('444')[0].source,'auto');
+        assert.equal(discovered.radmin.discovery,true);
+        assert.deepEqual(automaticRadmin.saved(),[]);
+        await automaticRadmin.send({userId:'000',text:'Radmin automatic'},['444','555']);
+        assert.equal(sends.length,1);
+        assert.equal(sends[0].url,'http://26.10.0.2:8765/subtitle');
+        global.fetch=fetchBeforeRadmin;
         console.log('PASS: Tailscale validation, per-friend persistence, self address, discovery sharing, automatic/manual routing, deduplication, fallback, identity mismatch, damaged settings preservation');
     } finally {
         global.fetch=originalFetch;

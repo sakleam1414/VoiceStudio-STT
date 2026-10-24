@@ -1,7 +1,7 @@
 /**
  * @name Microphone
  * @author Codex
- * @version 2.8.0
+ * @version 2.9.0
  * @description Локальная передача микрофона в Vosk, Whisper, wav2vec2 или GigaAM и отображение распознанной речи в субтитрах.
  */
 // BEGIN GENERATED VOICE STUDIO NETWORK
@@ -113,11 +113,12 @@ function createVoiceStudioNetwork() {
                 const revision = this.revision;
                 this.pending = (async () => {
                     const manual = this.saved();
-                    let addresses = [], discoveryError = '';
+                    let addresses = [], discoveryError = '', radmin = null;
                     try {
                         const data = await networkRequest('http://127.0.0.1:8765/peers', {}, 6500);
                         if (!Array.isArray(data.addresses)) throw new Error('Сервер не вернул список устройств.');
                         addresses = data.addresses.map(a => parsePeerAddress(a).address);
+                        radmin = data.radmin || null;
                     } catch (error) { discoveryError = error.message; }
                     const candidates = [...new Set([...addresses, ...manual.map(p => p.address)])];
                     const peers = new Map(), states = new Map();
@@ -137,7 +138,7 @@ function createVoiceStudioNetwork() {
                         }
                     }));
                     for (const items of peers.values()) items.sort((a,b) => (a.source === 'manual') - (b.source === 'manual'));
-                    return {peers, states, addresses, discoveryError, revision};
+                    return {peers, states, addresses, discoveryError, revision, radmin};
                 })();
                 try {
                     const result = await this.pending;
@@ -180,7 +181,7 @@ function createVoiceStudioNetwork() {
             Object.assign(dialog.style, {display:'grid', gap:'12px', width:'min(520px,100%)', minWidth:'0', boxSizing:'border-box', maxHeight:'90vh', overflowY:'auto', padding:'22px', border:'1px solid #35415b', borderRadius:'16px', background:'#10131e', color:'#dbe4f4', font:'14px/1.5 Segoe UI, sans-serif', boxShadow:'0 24px 80px #0009'});
             dialog.setAttribute('role','dialog'); dialog.setAttribute('aria-modal','true'); dialog.setAttribute('aria-label','Связь с друзьями');
             const heading = document.createElement('strong'); heading.textContent = friend.userId ? `Адрес: ${friend.name || 'друг'}` : 'Связь с друзьями'; heading.style.fontSize = '20px';
-            const hint = document.createElement('div'); hint.textContent = 'Tailscale: автоматический поиск или ручной адрес. Radmin VPN: вступите с другом в одну сеть и добавьте его адрес 26.x.x.x вручную.'; hint.style.color='#9eacc4';
+            const hint = document.createElement('div'); hint.textContent = 'Tailscale и Radmin VPN: автоматический поиск друзей с Voice Studio. В Radmin один раз войдите в общую сеть VoiceStudio через «Сеть → Присоединиться к сети». Если друг не найден, добавьте его адрес вручную.'; hint.style.color='#9eacc4';
             const status = document.createElement('div'); status.setAttribute('role','status'); status.style.color='#93d3e2';
             function button(text, action) {
                 const node = document.createElement('button'); node.type='button'; node.textContent=text;
@@ -204,7 +205,16 @@ function createVoiceStudioNetwork() {
                     status.textContent='Адрес скопирован. Отправьте его другу в сообщении.';
                 } catch (error) { status.textContent=`Не удалось скопировать: ${error.message}`; }
             });
-            own.append(vpnChoice,ownAddress,copy);
+            const openRadmin=button('Radmin: запуск и адрес',async()=>{
+                openRadmin.disabled=true;
+                try {
+                    const data=await networkRequest('http://127.0.0.1:8765/radmin/open',{method:'POST'});
+                    status.textContent=data.message || 'Radmin открыт. Первый вход в общую сеть — вручную.';
+                    vpnChoice.value='radmin'; vpnChoice.onchange();
+                } catch(error){status.textContent=`Radmin: ${error.message}`;}
+                finally{openRadmin.disabled=false;}
+            });
+            own.append(openRadmin,vpnChoice,ownAddress,copy);
             const nameLabel=document.createElement('label'); nameLabel.textContent='Имя друга (для себя)';
             const name=document.createElement('input'); name.value=friend.name || ''; name.maxLength=80; name.setAttribute('aria-label','Имя друга'); nameLabel.append(name);
             let editingId=friend.userId || null, editingAddress=null;
@@ -251,6 +261,7 @@ function createVoiceStudioNetwork() {
                     list.replaceChildren();
                     const total=result.peers.size;
                     status.textContent=result.discoveryError ? 'Автопоиск сейчас недоступен. Добавьте адрес друга вручную; сохранённые адреса проверены.' : `Найдено друзей: ${total}. Можно также добавить адрес вручную.`;
+                    if(result.radmin?.available && !result.radmin.discovery)status.textContent+=' Поиск Radmin недоступен: используйте ручной адрес.';
                     for(const peer of manager.saved()) {
                         const row=document.createElement('div'); Object.assign(row.style,{padding:'10px', background:'#151a28', borderRadius:'8px', overflowWrap:'anywhere'});
                         const state=result.states.get(peer.address);
@@ -582,7 +593,7 @@ module.exports = class Microphone {
                 Начать распознавание
             </button>
             <button type="button" class="mic-btn" id="mic-network-btn">Мой адрес и адреса друзей</button>
-            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.8.0</span></div>
+            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.9.0</span></div>
         `;
 
         const savedPos = BdApi.Data.load("Microphone", "panelPosition");

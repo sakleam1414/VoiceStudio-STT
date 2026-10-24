@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='stt-widgets-') as temp:
     original_tk=tk.Tk
     results=[]
     errors=[]
-    payload={'services':{'stt':{'state':'active','text':'Запущен'},'startup':{'state':'inactive','text':'Выключена'},'tailscale':{'state':'unknown','text':'Не подключён'},'subtitles':{'state':'unknown','text':'Ожидание плагина'}},'message':''}
+    payload={'services':{'radmin':{'state':'active','text':'Автопоиск','addresses':['26.10.0.1']},'stt':{'state':'active','text':'Запущен'},'startup':{'state':'inactive','text':'Выключена'},'tailscale':{'state':'unknown','text':'Не подключён'},'subtitles':{'state':'unknown','text':'Ожидание плагина'}},'message':''}
     def make_root():
         root=original_tk()
         root.withdraw()
@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix='stt-widgets-') as temp:
                 assert root.title()=='Voice Studio · Речь и субтитры'
                 assert hasattr(root, 'brand_image')
                 buttons=[w.cget('text') for w in widgets if isinstance(w,tk.Button)]
-                assert sorted(buttons)==sorted(['Установить','Проверить ↻']),buttons
+                assert sorted(buttons)==sorted(['Установить','Проверить ↻','Radmin: запуск и адрес']),buttons
                 assert root.winfo_reqwidth()<=900,root.winfo_reqwidth()
                 assert root.winfo_reqheight()<=320,root.winfo_reqheight()
                 assert any('Актуальная версия' in value for value in text),text
@@ -63,6 +63,25 @@ with tempfile.TemporaryDirectory(prefix='stt-widgets-') as temp:
         update['state']='inactive'
         update['components']['microphone']={'current':'2.7.0','version':'2.7.0','available':False}
         module.run_dashboard()
+    assert module.radmin_addresses_cache==['26.10.0.1'] # A reopened dashboard has its own process/cache.
+    # Inspect the setup widgets without showing or driving the desktop.
+    real_top=tk.Toplevel
+    def hidden_top(parent):
+        window=real_top(parent);window.withdraw();return window
+    parent=original_tk();parent.withdraw()
+    def descendants(widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from descendants(child)
+    with patch.object(tk,'Toplevel',hidden_top),patch.object(module,'launch_radmin',return_value={'message':'Opened'}) as launch:
+        popup=module.show_radmin_setup(parent)
+        widgets=list(descendants(popup))
+        entries=[w for w in widgets if isinstance(w,tk.Entry)]
+        assert len(entries)==2 and entries[1].cget('show')=='•'
+        assert entries[0].get()=='VoiceStudio' and entries[1].get()==''
+        assert module.show_radmin_setup(parent) is popup and launch.call_count==1
+        assert not popup.winfo_viewable()
+        popup.destroy();parent.destroy()
     logging.shutdown()
     assert not errors,errors
     assert results

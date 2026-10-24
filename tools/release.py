@@ -83,6 +83,7 @@ def package(exe, output, versions):
     metadata = dict(manifest, archive={'name': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()})
     notes = ('Скачайте один ZIP и распакуйте целиком в папку BetterDiscord `plugins`.\n\n'
              'Запуск: `stt_server.exe`. Настройки и модели при обновлении сохраняются.\n\n'
+             'Radmin VPN: кнопка запуска и копирования адреса; первый вход в общую сеть вручную, затем автопоиск в Microphone и Subtitles. Ручной адрес остаётся доступен.\n\n'
              '<!-- voice-studio-manifest\n' + json.dumps(metadata, separators=(',', ':')) + '\n-->\n')
     (output / 'release-notes.md').write_text(notes, encoding='utf-8')
     print(f'Verified release: {archive}')
