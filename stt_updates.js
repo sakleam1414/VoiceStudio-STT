@@ -15,10 +15,10 @@ function show() { BdApi.UI?.showToast?.('Обновления доступны �
 // Network addresses are personal data. They are stored separately from release files.
 function parsePeerAddress(input) {
     const value = String(input || '').trim();
-    const match = /^(?:http:\/\/)?(100\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::(\d{1,5}))?\/?$/.exec(value);
-    if (!match) throw new Error('Введите адрес Tailscale: 100.x.x.x или 100.x.x.x:8765');
+    const match = /^(?:http:\/\/)?((?:100|26)\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::(\d{1,5}))?\/?$/.exec(value);
+    if (!match) throw new Error('Введите IP Tailscale (100.x.x.x) или Radmin VPN (26.x.x.x)');
     const parts = match[1].split('.').map(Number);
-    if (parts.some(n => n > 255) || parts[1] < 64 || parts[1] > 127) throw new Error('Это не IPv4-адрес сети Tailscale (100.64–100.127).');
+    if (parts.some(n => n > 255) || !(parts[0] === 26 || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127))) throw new Error('Нужен IPv4 Tailscale (100.64–100.127) или Radmin VPN (26.x.x.x).');
     const port = Number(match[2] || 8765);
     if (port < 1 || port > 65535) throw new Error('Порт должен быть от 1 до 65535.');
     const host = parts.join('.');
@@ -85,10 +85,10 @@ class PeerNetwork {
         return {userId: peer.userId, address: endpoint.address};
     }
 
-    async self() {
+    async self(vpn = null) {
         const data = await networkRequest('http://127.0.0.1:8765/network', {}, 6500);
-        const address = data.addresses?.[0];
-        if (!address) throw new Error('Нет адреса Tailscale. Подключите Tailscale и повторите.');
+        const address = vpn ? data.networks?.find(n => n.vpn === vpn)?.address || data.addresses?.find(ip => vpn === 'radmin' ? ip.startsWith('26.') : ip.startsWith('100.')) : data.addresses?.[0];
+        if (!address) throw new Error('Нет адреса выбранной VPN. Подключите Tailscale или Radmin VPN.');
         return parsePeerAddress(`${address}:${data.port || 8765}`).address;
     }
 
@@ -170,7 +170,7 @@ function showNetwork(directory, friend = {}) {
     Object.assign(dialog.style, {display:'grid', gap:'12px', width:'min(520px,100%)', minWidth:'0', boxSizing:'border-box', maxHeight:'90vh', overflowY:'auto', padding:'22px', border:'1px solid #35415b', borderRadius:'16px', background:'#10131e', color:'#dbe4f4', font:'14px/1.5 Segoe UI, sans-serif', boxShadow:'0 24px 80px #0009'});
     dialog.setAttribute('role','dialog'); dialog.setAttribute('aria-modal','true'); dialog.setAttribute('aria-label','Связь с друзьями');
     const heading = document.createElement('strong'); heading.textContent = friend.userId ? `Адрес: ${friend.name || 'друг'}` : 'Связь с друзьями'; heading.style.fontSize = '20px';
-    const hint = document.createElement('div'); hint.textContent = 'Tailscale ищет друзей автоматически. Если друг не найден, попросите его скопировать свой адрес и добавьте его здесь.'; hint.style.color='#9eacc4';
+    const hint = document.createElement('div'); hint.textContent = 'Tailscale: автоматический поиск или ручной адрес. Radmin VPN: вступите с другом в одну сеть и добавьте его адрес 26.x.x.x вручную.'; hint.style.color='#9eacc4';
     const status = document.createElement('div'); status.setAttribute('role','status'); status.style.color='#93d3e2';
     function button(text, action) {
         const node = document.createElement('button'); node.type='button'; node.textContent=text;
@@ -180,9 +180,13 @@ function showNetwork(directory, friend = {}) {
     const own = document.createElement('div'); Object.assign(own.style,{display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center'});
     const ownAddress = document.createElement('span'); ownAddress.textContent='Мой адрес: проверка…'; ownAddress.style.flex='1';
     let selfAddress = null;
+    const vpnChoice=document.createElement('select'); vpnChoice.setAttribute('aria-label','VPN для моего адреса');
+    vpnChoice.append(new Option('Tailscale','tailscale'),new Option('Radmin VPN','radmin'));
+    Object.assign(vpnChoice.style,{padding:'9px',color:'#e8edf8',background:'#202940',border:'1px solid #39496b',borderRadius:'8px',font:'inherit'});
+    vpnChoice.onchange=()=>{selfAddress=null;ownAddress.textContent='Мой адрес: проверка…';void manager.self(vpnChoice.value).then(value=>{selfAddress=value;ownAddress.textContent=`Мой адрес: ${value}`;}).catch(error=>{ownAddress.textContent=error.message;});};
     const copy = button('Скопировать мой адрес', async () => {
         try {
-            selfAddress = await manager.self();
+            selfAddress = await manager.self(vpnChoice.value);
             ownAddress.textContent=`Мой адрес: ${selfAddress}`;
             if (typeof DiscordNative !== 'undefined' && DiscordNative.clipboard?.copy) DiscordNative.clipboard.copy(selfAddress);
             else if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(selfAddress);
@@ -190,7 +194,7 @@ function showNetwork(directory, friend = {}) {
             status.textContent='Адрес скопирован. Отправьте его другу в сообщении.';
         } catch (error) { status.textContent=`Не удалось скопировать: ${error.message}`; }
     });
-    own.append(ownAddress,copy);
+    own.append(vpnChoice,ownAddress,copy);
     const nameLabel=document.createElement('label'); nameLabel.textContent='Имя друга (для себя)';
     const name=document.createElement('input'); name.value=friend.name || ''; name.maxLength=80; name.setAttribute('aria-label','Имя друга'); nameLabel.append(name);
     let editingId=friend.userId || null, editingAddress=null;
@@ -219,8 +223,8 @@ function showNetwork(directory, friend = {}) {
         try{address.value=manager.saved().find(p=>p.userId===editingId)?.address || '';}catch(error){status.textContent=error.message;}
     };
     participantLabel.append(participant);
-    const addressLabel=document.createElement('label'); addressLabel.textContent='Адрес друга в Tailscale';
-    const address=document.createElement('input'); address.placeholder='100.x.x.x или 100.x.x.x:8765'; address.setAttribute('aria-label','Адрес друга в Tailscale'); address.autocomplete='off'; address.maxLength=100; addressLabel.append(address);
+    const addressLabel=document.createElement('label'); addressLabel.textContent='Адрес друга в VPN';
+    const address=document.createElement('input'); address.placeholder='100.x.x.x или 26.x.x.x'; address.setAttribute('aria-label','Адрес друга в VPN'); address.autocomplete='off'; address.maxLength=100; addressLabel.append(address);
     for (const input of [name,address,participant]) Object.assign(input.style,{display:'block', boxSizing:'border-box', width:'100%', marginTop:'5px', padding:'10px', borderRadius:'8px', border:'1px solid #39496b', color:'#fff', background:'#1b2232', font:'inherit'});
     try { if(friend.userId) {const saved=manager.saved().find(p=>p.userId===friend.userId);if(saved)address.value=saved.address;} }
     catch(error){status.textContent=error.message;}
@@ -289,7 +293,7 @@ function showNetwork(directory, friend = {}) {
     const close=button('Готово',dismiss);
     dialog.append(heading,hint,own,participantLabel,nameLabel,addressLabel,actions,status,list,close);backdrop.append(dialog);document.body.append(backdrop);
     backdrop.onclick=event=>{if(event.target===backdrop)dismiss();};window.addEventListener('keydown',keydown,true);address.focus();
-    void manager.self().then(value=>{selfAddress=value;ownAddress.textContent=`Мой адрес: ${value}`;}).catch(error=>{ownAddress.textContent=`Мой адрес: ${error.message}`;});
+    void manager.self().then(value=>{selfAddress=value;vpnChoice.value=value.startsWith('26.')?'radmin':'tailscale';ownAddress.textContent=`Мой адрес: ${value}`;}).catch(error=>{ownAddress.textContent=`Мой адрес: ${error.message}`;});
     void refresh();
 }
 

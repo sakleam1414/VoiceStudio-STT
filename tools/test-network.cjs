@@ -10,10 +10,18 @@ async function main() {
     try {
         assert.equal(parsePeerAddress(' http://100.77.3.4:8765/ ').address,'100.77.3.4');
         assert.equal(parsePeerAddress('100.127.3.4:9999').url,'http://100.127.3.4:9999');
+        assert.equal(parsePeerAddress('26.10.3.4:9000').url,'http://26.10.3.4:9000');
+        assert.throws(()=>parsePeerAddress('26.999.0.1'));
         for (const input of ['127.0.0.1','192.168.1.2','8.8.8.8','100.63.1.1','100.128.1.1','100.77.999.1','100.77.1.1:0','100.77.1.1:65536','http://evil.test','http://100.77.1.1/admin','http://user@100.77.1.1','100.77.1.1?foo']) {
             assert.throws(()=>parsePeerAddress(input), input);
         }
         const manager = new PeerNetwork(directory);
+        const radmin = new PeerNetwork(path.join(directory,'unused'));
+        const previousFetch=global.fetch;
+        global.fetch=async()=>({ok:true,json:async()=>({addresses:['100.77.9.1','26.10.0.1'],networks:[{address:'100.77.9.1',vpn:'tailscale'},{address:'26.10.0.1',vpn:'radmin'}]})});
+        assert.equal(await radmin.self('radmin'),'26.10.0.1');
+        assert.equal(await radmin.self('tailscale'),'100.77.9.1');
+        global.fetch=previousFetch;
         manager.save('100.77.1.2','111','Друг один');
         manager.save('100.77.1.3:9000','222','Друг два');
         assert.deepEqual(new PeerNetwork(directory).saved().map(p=>p.userId),['111','222']);

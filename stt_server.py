@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.8.2"
+SERVER_VERSION = "1.9.0"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -87,11 +87,12 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   <section class="services" aria-label="Состояния служб">
    <div class="service"><div class="service-top"><span class="name">Сервер речи</span><span class="badge" id="stt" data-state="unknown">Проверка…</span></div><div class="detail">Автозагрузка <span class="badge" id="startup" data-state="unknown">Проверка…</span></div></div>
    <div class="service"><div class="service-top"><span class="name">Tailscale</span><span class="badge" id="tailscale" data-state="unknown">Проверка…</span></div><div class="detail"><span id="tailscale-startup" hidden></span></div></div>
+   <div class="service"><div class="service-top"><span class="name">Radmin VPN</span><span class="badge" id="radmin" data-state="unknown">Не используется</span></div></div>
    <div class="service"><div class="service-top"><span class="name">Субтитры</span><span class="badge" id="subtitles" data-state="unknown">Проверка…</span></div></div>
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.8.2</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.9.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -110,7 +111,7 @@ async function refresh(){
   document.getElementById('updated').textContent=update.state==='active'?'Доступна версия '+update.version:'Обновлено '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
   document.getElementById('message').textContent=update.message||data.message||'';
  }catch(error){
-  for(const id of ['stt','startup','tailscale','tailscale-startup','subtitles'])badge(id,'unknown','Нет связи');
+  for(const id of ['stt','startup','tailscale','radmin','tailscale-startup','subtitles'])badge(id,'unknown','Нет связи');
   document.getElementById('updated').textContent='Нет соединения';
   document.getElementById('message').textContent='Сервер недоступен. Запустите stt_server.bat и обновите страницу.';
  }finally{clearTimeout(timeout);pending=false;refreshButton.disabled=false}
@@ -137,6 +138,49 @@ tailscale_peers_cache = set()
 tailscale_peers_cache_at = 0.0
 tailscale_peer_records_cache = []
 tailscale_self_addresses = []
+radmin_addresses_cache = []
+radmin_addresses_cache_at = 0.0
+radmin_addresses_lock = threading.Lock()
+
+
+def get_radmin_self_addresses():
+    """Read only active Radmin adapters; never scan the 26/8 address range."""
+    global radmin_addresses_cache, radmin_addresses_cache_at
+    if sys.platform != "win32":
+        return []
+    with radmin_addresses_lock:
+        if time.monotonic() - radmin_addresses_cache_at < 60:
+            return list(radmin_addresses_cache)
+        command = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+                   "@(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter \"IPEnabled=True AND Description LIKE '%Radmin%'\" "
+                   "-ErrorAction Stop | ForEach-Object { $_.IPAddress } | Where-Object { $_ -like '26.*' }) | ConvertTo-Json -Compress")
+        executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        addresses = []
+        try:
+            result = subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-Command", command],
+                                    capture_output=True, timeout=4, check=True, text=True, encoding="utf-8-sig",
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            data = json.loads(result.stdout.strip() or "[]")
+            for value in ([data] if isinstance(data, str) else data):
+                ip = ipaddress.ip_address(value)
+                if ip.version == 4 and ip in ipaddress.ip_network("26.0.0.0/8"):
+                    addresses.append(str(ip))
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            logging.debug("Radmin adapter unavailable", exc_info=True)
+        radmin_addresses_cache = sorted(set(addresses))
+        radmin_addresses_cache_at = time.monotonic()
+        return list(radmin_addresses_cache)
+
+
+def is_vpn_source(address, local_address=None):
+    if is_tailscale_source(address):
+        return True
+    try:
+        ip = ipaddress.ip_address(address)
+        return (ip.version == 4 and ip in ipaddress.ip_network("26.0.0.0/8")
+                and str(local_address) in get_radmin_self_addresses())
+    except (ValueError, TypeError):
+        return False
 
 
 def get_tailscale_peer_records():
@@ -399,6 +443,10 @@ def get_dashboard_status():
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
         services["tailscale"] = {"state": "inactive", "text": "Недоступен"}
         message = message or str(error)
+    radmin = get_radmin_self_addresses()
+    services["radmin"] = {"state": "active" if radmin else "unknown", "text": "Адаптер готов · адрес вручную" if radmin else "Не используется"}
+    if radmin:
+        message = startup_error or ""
     if sys.platform == "win32":
         import winreg
         try:
@@ -438,6 +486,8 @@ async def handle_subtitle_http(reader, writer):
     global subtitle_user_id, subtitle_last_seen
     remote = writer.get_extra_info("peername")
     source_ip = normalize_ip_address(remote[0]) if remote else None
+    local = writer.get_extra_info("sockname")
+    local_ip = normalize_ip_address(local[0]) if local else None
     is_loopback = bool(source_ip and source_ip.is_loopback)
     try:
         request_line = await asyncio.wait_for(reader.readline(), timeout=5)
@@ -471,8 +521,8 @@ async def handle_subtitle_http(reader, writer):
         path = urlsplit(target).path
 
         if method == "OPTIONS":
-            if not is_loopback and not is_tailscale_source(source_ip):
-                await send_http_response(writer, 403, {"error": "Tailscale peer required"})
+            if not is_loopback and not await asyncio.to_thread(is_vpn_source, source_ip, local_ip):
+                await send_http_response(writer, 403, {"error": "VPN peer required"})
                 return
             await send_http_response(writer, 204, b"", "text/plain")
             return
@@ -480,8 +530,8 @@ async def handle_subtitle_http(reader, writer):
             await send_http_response(writer, 403, {"error": "local access required"})
             return
         if path in ("/ping", "/subtitle") and not is_loopback:
-            if not is_tailscale_source(source_ip):
-                await send_http_response(writer, 403, {"error": "Tailscale peer required"})
+            if not await asyncio.to_thread(is_vpn_source, source_ip, local_ip):
+                await send_http_response(writer, 403, {"error": "VPN peer required"})
                 return
 
         if method == "GET" and path == "/":
@@ -502,11 +552,18 @@ async def handle_subtitle_http(reader, writer):
                 return
             await send_http_response(writer, 200, {"ok": True, "addresses": addresses})
         elif method == "GET" and path == "/network":
+            addresses = []
             try:
                 await asyncio.to_thread(get_tailscale_peer_records)
-                await send_http_response(writer, 200, {"ok": True, "addresses": tailscale_self_addresses, "port": SUBTITLE_PORT})
-            except (OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
-                await send_http_response(writer, 503, {"error": str(error)})
+                addresses.extend({"address": ip, "vpn": "tailscale"} for ip in tailscale_self_addresses)
+            except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+                pass
+            radmin = await asyncio.to_thread(get_radmin_self_addresses)
+            addresses.extend({"address": ip, "vpn": "radmin"} for ip in radmin)
+            if not addresses:
+                await send_http_response(writer, 503, {"error": "Подключите Tailscale или Radmin VPN"})
+            else:
+                await send_http_response(writer, 200, {"ok": True, "addresses": [item["address"] for item in addresses], "networks": addresses, "port": SUBTITLE_PORT})
         elif method == "GET" and path == "/inbox":
             messages = list(subtitle_inbox)
             subtitle_inbox.clear()
@@ -1228,8 +1285,8 @@ def run_dashboard():
     root.title("Voice Studio · Речь и субтитры")
     configure_window_brand(root)
     root.configure(bg="#10131e")
-    root.geometry("900x296")
-    root.minsize(860, 296)
+    root.geometry("900x320")
+    root.minsize(860, 320)
     root.resizable(True, False)
     root.option_add("*Font", ("Segoe UI", 10))
     content = tk.Frame(root, bg="#10131e")
@@ -1253,7 +1310,7 @@ def run_dashboard():
     services = tk.Frame(content, bg="#10131e")
     services.grid(row=0, column=1, rowspan=4, sticky="ne")
     canvases = {}
-    for row, (key, title) in enumerate((("stt", f"Сервер речи · {SERVER_VERSION}"), ("tailscale", "Tailscale"), ("subtitles", "Связь субтитров"), ("subtitles-version", "subtitles.plugin.js"), ("microphone-version", "microphone.plugin.js"))):
+    for row, (key, title) in enumerate((("stt", f"Сервер речи · {SERVER_VERSION}"), ("tailscale", "Tailscale"), ("radmin", "Radmin VPN"), ("subtitles", "Связь субтитров"), ("subtitles-version", "subtitles.plugin.js"), ("microphone-version", "microphone.plugin.js"))):
         tk.Label(services, text=title, fg="#9ad8e5", bg="#10131e", font=("Segoe UI", 9, "bold")).grid(row=row, column=0, sticky="e", padx=(0, 12), pady=3)
         canvas = tk.Canvas(services, width=280, height=26, bg="#10131e", highlightthickness=0)
         canvas.grid(row=row, column=1, pady=3)
@@ -1329,8 +1386,8 @@ def run_dashboard():
                 statuses = data["services"]
                 startup = statuses.get("startup", {})
                 startup_enabled = startup.get("state") == "active"
-                for key in ("stt", "tailscale", "subtitles"):
-                    value = statuses[key]
+                for key in ("stt", "tailscale", "radmin", "subtitles"):
+                    value = statuses.get(key, {"state": "unknown", "text": "Не используется"})
                     text = value["text"]
                     if key == "stt":
                         text += " · автозагрузка: " + ("вкл." if startup_enabled else "выкл." if startup.get("state") == "inactive" else "?")
@@ -1339,7 +1396,7 @@ def run_dashboard():
                     feedback.set(data["message"][:120])
                     feedback_label.configure(fg="#e8bf69")
             except Exception as error:
-                for key in ("stt", "tailscale", "subtitles"):
+                for key in ("stt", "tailscale", "radmin", "subtitles"):
                     paint(key, "inactive" if key == "stt" else "unknown", "Нет связи с сервером" if key == "stt" else "Не удалось проверить")
                 if isinstance(error, urllib.error.HTTPError):
                     message = f"Сервер ответил с ошибкой HTTP {error.code}. Перезапустите сервер. Подробнее: stt_server.log"
