@@ -9,6 +9,7 @@ portable-build/
 build/
 release/
 .stt-update-*/
+.stt-startup-backup/
 *.exe
 *.zip
 build-log.txt

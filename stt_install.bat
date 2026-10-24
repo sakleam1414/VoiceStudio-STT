@@ -28,7 +28,7 @@ if errorlevel 1 goto failed
 "%~dp0.stt-venv\Scripts\python.exe" "%~dp0stt_server.py" --check
 if errorlevel 1 goto failed
 echo.
-echo Ready. Run stt_server.bat. Autostart can be enabled in its window.
+echo Ready. Run stt_server.bat. Voice Studio EXE startup is configured automatically.
 pause
 exit /b 0
 

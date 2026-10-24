@@ -13,7 +13,7 @@ COMPONENTS = {
     'microphone': ['microphone.plugin.js', 'vosk_models.json', 'stt_engines.json', 'stt_updater.ps1', 'stt_updates.js', 'stt_update.json'],
     'subtitles': ['subtitles.plugin.js', 'stt_updater.ps1', 'stt_updates.js', 'stt_update.json'],
 }
-SUPPORT = ['stt_updater.ps1', 'stt_updates.js', 'STT_README.txt', 'stt_update.json']
+SUPPORT = ['stt_updater.ps1', 'stt_updates.js', 'STT_README.txt', 'stt_update.json', 'voice-studio.ico', 'voice-studio.png']
 
 def version(value):
     if not re.fullmatch(r'\d+\.\d+\.\d+', value):
@@ -44,6 +44,14 @@ def set_versions(release=None, server=None, microphone=None, subtitles=None):
                 source = re.sub(r'Обновление Subtitles · [\d.]+', f'Обновление Subtitles · {value}', source)
         path.write_text(source, encoding='utf-8', newline='\n')
     file.write_text(json.dumps(versions, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    metadata = ROOT / 'tools/windows-version.txt'
+    if metadata.is_file():
+        source = metadata.read_text(encoding='utf-8')
+        value = versions['server_version']
+        numbers = ', '.join(value.split('.') + ['0'])
+        source = re.sub(r'(filevers|prodvers)=\([\d, ]+\)', lambda m: m[1]+'=('+numbers+')', source)
+        source = re.sub(r"(StringStruct\('(?:FileVersion|ProductVersion)', ')[\d.]+('\))", lambda m: m[1]+value+m[2], source)
+        metadata.write_text(source, encoding='utf-8')
     return versions
 
 def package(exe, output, versions):
@@ -51,7 +59,9 @@ def package(exe, output, versions):
     shutil.copyfile(exe, output / 'stt_server.exe')
     names = list(dict.fromkeys(sum(COMPONENTS.values(), []) + SUPPORT))
     for name in names:
-        if name != 'stt_server.exe': shutil.copyfile(ROOT / name, output / name)
+        if name != 'stt_server.exe':
+            source = ROOT / 'assets' / name if name.startswith('voice-studio.') else ROOT / name
+            shutil.copyfile(source, output / name)
     manifest = {'schema': 1, 'release_version': versions['release_version'], 'components': {}}
     for component, files in COMPONENTS.items():
         manifest['components'][component] = {

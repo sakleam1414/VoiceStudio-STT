@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.6.1"
+SERVER_VERSION = "1.7.0"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -81,17 +81,17 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
 <main aria-label="Панель сервера Voice Studio">
  <div class="content">
   <header>
-   <h1>Запуск и автозагрузка</h1>
+   <h1>Voice Studio</h1>
    <p class="intro">Распознавание речи и субтитры</p>
   </header>
   <section class="services" aria-label="Состояния служб">
-   <div class="service"><div class="service-top"><span class="name">stt_server.py</span><span class="badge" id="stt" data-state="unknown">Проверка…</span></div><div class="detail">Автозагрузка <span class="badge" id="startup" data-state="unknown">Проверка…</span></div></div>
+   <div class="service"><div class="service-top"><span class="name">Сервер речи</span><span class="badge" id="stt" data-state="unknown">Проверка…</span></div><div class="detail">Автозагрузка <span class="badge" id="startup" data-state="unknown">Проверка…</span></div></div>
    <div class="service"><div class="service-top"><span class="name">Tailscale</span><span class="badge" id="tailscale" data-state="unknown">Проверка…</span></div><div class="detail"><span id="tailscale-startup" hidden></span></div></div>
    <div class="service"><div class="service-top"><span class="name">Субтитры</span><span class="badge" id="subtitles" data-state="unknown">Проверка…</span></div></div>
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.6.1</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.7.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -224,60 +224,85 @@ def normalize_ip_address(address):
         return None
 
 
+STARTUP_NAME = "Voice Studio"
+STARTUP_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_APPROVAL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+
+
 def get_autostart_status():
-    """Read Windows startup settings without changing the user's configuration."""
+    """Read the same executable startup entry used by Windows Task Manager."""
     if sys.platform != "win32":
         return {"state": "unknown", "text": "Только Windows"}
     import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY) as key:
+            command, _ = winreg.QueryValueEx(key, STARTUP_NAME)
+    except FileNotFoundError:
+        return {"state": "inactive", "text": "Не настроена"}
+    expected = f'"{APP_DIR / "stt_server.exe"}" --background'
+    if str(command).casefold() != expected.casefold():
+        return {"state": "unknown", "text": "Указана другая папка"}
+    state = "active"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVAL_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, STARTUP_NAME)
+        if isinstance(value, bytes) and value:
+            state = "inactive" if value[0] in (3, 7) else "active" if value[0] in (2, 6) else "unknown"
+    except FileNotFoundError:
+        pass
+    return {"state": state, "text": {"active": "Включена", "inactive": "Отключена в Windows", "unknown": "Не удалось проверить"}[state]}
 
-    startup = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup"
-    target = str(APP_DIR / "stt_server.bat").casefold()
-    states = []
+
+def ensure_autostart():
+    """Migrate this app's legacy BAT entries to one EXE entry; respect Windows disable."""
+    if sys.platform != "win32" or PORT != 5000 or SUBTITLE_PORT != 8765:
+        return
+    executable = APP_DIR / "stt_server.exe"
+    if not executable.is_file():
+        return  # Source-only development does not register an unrelated executable.
+    import winreg
+    expected = f'"{executable}" --background'
+    startup = Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup"
+    owned = []
+    disabled_legacy = False
     for name in ("bd_stt_server.bat", "stt_server_autostart.bat"):
         entry = startup / name
-        if not entry.is_file() or target not in entry.read_text(encoding="utf-8", errors="replace").casefold():
+        if not entry.is_file():
             continue
+        text = entry.read_text(encoding="utf-8", errors="replace").casefold()
+        target = str(APP_DIR / "stt_server.bat").casefold()
+        legacy_signature = ("%~dp0stt_server.py" in text and "from vosk import kaldi" in text and "websockets" in text)
+        if target not in text and not legacy_signature:
+            logging.info("Preserving startup entry belonging to another installation: %s", name)
+            continue
+        owned.append(entry)
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder") as key:
                 value, _ = winreg.QueryValueEx(key, name)
-            state = value[0] if isinstance(value, bytes) and value else None
-            states.append("active" if state in (2, 6) else "inactive" if state in (3, 7) else "unknown")
-        except FileNotFoundError:
-            states.append("active")
-    state = "active" if "active" in states else "inactive" if not states or all(s == "inactive" for s in states) else "unknown"
-    return {"state": state, "text": {"active": "Включена", "inactive": "Выключена", "unknown": "Не удалось проверить"}[state]}
-
-
-def set_autostart(enabled):
-    if sys.platform != "win32":
-        raise RuntimeError("Автозагрузка доступна только в Windows")
-    import winreg
-
-    directory = Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup"
-    launcher = APP_DIR / "stt_server.bat"
-    if not launcher.is_file():
-        raise RuntimeError("Для автозагрузки нужен stt_server.bat рядом с программой")
-    target = str(launcher).casefold()
-    for name in ("bd_stt_server.bat", "stt_server_autostart.bat"):
-        entry = directory / name
-        if entry.exists() and target not in entry.read_text(encoding="utf-8", errors="replace").casefold():
-            raise RuntimeError(f"Файл автозагрузки {name} относится к другой папке. Удалите старую запись в настройках Windows.")
-    if enabled:
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "bd_stt_server.bat").write_text(f'@echo off\nchcp 65001 >nul\ncall "{launcher}" --background\n', encoding="utf-8")
-    else:
-        for name in ("bd_stt_server.bat", "stt_server_autostart.bat"):
-            (directory / name).unlink(missing_ok=True)
-    if enabled:
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder", 0, winreg.KEY_SET_VALUE) as key:
-                for name in ("bd_stt_server.bat", "stt_server_autostart.bat"):
-                    try:
-                        winreg.DeleteValue(key, name)
-                    except FileNotFoundError:
-                        pass
+            disabled_legacy |= bool(isinstance(value, bytes) and value and value[0] in (3, 7))
         except FileNotFoundError:
             pass
+    # Never remove old entries until the replacement registration has succeeded.
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY) as key:
+            current, _ = winreg.QueryValueEx(key, STARTUP_NAME)
+    except FileNotFoundError:
+        current = None
+    if current is not None and str(current).casefold() != expected.casefold():
+        logging.warning("Startup belongs to another Voice Studio folder; leaving it unchanged")
+        return
+    if current is None:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, STARTUP_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, STARTUP_NAME, 0, winreg.REG_SZ, expected)
+        if disabled_legacy:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, STARTUP_APPROVAL_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, STARTUP_NAME, 0, winreg.REG_BINARY, bytes([3]) + bytes(11))
+    for entry in owned:
+        backup = APP_DIR / ".stt-startup-backup"
+        backup.mkdir(exist_ok=True)
+        shutil.copy2(entry, backup / entry.name)
+        entry.unlink()
+        logging.info("Migrated legacy startup entry: %s", entry.name)
 
 
 def get_update_settings():
@@ -1145,28 +1170,65 @@ def open_dashboard():
     webbrowser.open(f"http://127.0.0.1:{SUBTITLE_PORT}/")
 
 
+def configure_window_brand(root):
+    try:
+        icon = RESOURCE_DIR / "assets" / "voice-studio.ico"
+        root.iconbitmap(str(icon if icon.is_file() else APP_DIR / "voice-studio.ico"))
+    except Exception:
+        logging.debug("Window icon unavailable", exc_info=True)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VoiceStudio.STT")
+            root.update_idletasks()
+            parent_window = ctypes.windll.user32.GetParent
+            parent_window.argtypes = [wintypes.HWND]
+            parent_window.restype = wintypes.HWND
+            hwnd = parent_window(root.winfo_id())
+            set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+            set_attribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+            dark = ctypes.c_int(1)
+            set_attribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
+        except (OSError, AttributeError):
+            logging.debug("Dark title bar unavailable", exc_info=True)
+
+
 def run_dashboard():
     """Small native status window. Closing it leaves the server running."""
     import tkinter as tk
     from concurrent.futures import ThreadPoolExecutor
 
     root = tk.Tk()
-    root.title("STT · Запуск и автозагрузка")
+    root.title("Voice Studio · Речь и субтитры")
+    configure_window_brand(root)
     root.configure(bg="#10131e")
-    root.geometry("800x200")
-    root.minsize(700, 200)
+    root.geometry("820x214")
+    root.minsize(760, 214)
     root.resizable(True, False)
     root.option_add("*Font", ("Segoe UI", 10))
     content = tk.Frame(root, bg="#10131e")
     content.pack(fill="both", expand=True, padx=20, pady=(16, 8))
     content.columnconfigure(0, weight=1)
     content.columnconfigure(1, minsize=415)
-    tk.Label(content, text="Запуск и автозагрузка", fg="#f3f4ff", bg="#10131e", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="nw", pady=1)
-    tk.Label(content, text="Сервер речи и субтитров", fg="#8997af", bg="#10131e", font=("Segoe UI", 9)).grid(row=1, column=0, sticky="nw", pady=(0, 4))
+    brand = tk.Frame(content, bg="#10131e")
+    brand.grid(row=0, column=0, rowspan=2, sticky="nw", pady=(2, 8))
+    try:
+        icon = RESOURCE_DIR / "assets" / "voice-studio.png"
+        logo = tk.PhotoImage(file=str(icon if icon.is_file() else APP_DIR / "voice-studio.png"))
+        root.brand_image = logo
+        tk.Label(brand, image=logo, bg="#10131e").pack(side="left", padx=(0, 12))
+    except tk.TclError:
+        pass
+    words = tk.Frame(brand, bg="#10131e")
+    words.pack(side="left")
+    tk.Label(words, text="VOICE STUDIO", fg="#88d5e5", bg="#10131e", font=("Segoe UI", 8, "bold"), anchor="w").pack(anchor="w")
+    tk.Label(words, text="Речь и субтитры", fg="#f3f4ff", bg="#10131e", font=("Segoe UI", 16, "bold"), anchor="w").pack(anchor="w")
+    tk.Label(content, text="Работает в фоне после закрытия окна", fg="#8997af", bg="#10131e", font=("Segoe UI", 9)).grid(row=2, column=0, sticky="nw", pady=(0, 4))
     services = tk.Frame(content, bg="#10131e")
     services.grid(row=0, column=1, rowspan=4, sticky="ne")
     canvases = {}
-    for row, (key, title) in enumerate((("stt", "stt_server.py"), ("tailscale", "Tailscale"), ("subtitles", "Субтитры"))):
+    for row, (key, title) in enumerate((("stt", "Сервер речи"), ("tailscale", "Tailscale"), ("subtitles", "Субтитры"))):
         tk.Label(services, text=title, fg="#9ad8e5", bg="#10131e", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky="e", padx=(0, 12), pady=3)
         canvas = tk.Canvas(services, width=280, height=26, bg="#10131e", highlightthickness=0)
         canvas.grid(row=row, column=1, pady=3)
@@ -1204,16 +1266,7 @@ def run_dashboard():
         next_update = 0.0
         next_refresh = 0.0
 
-    def toggle_startup():
-        try:
-            set_autostart(startup_enabled is not True)
-            refresh()
-        except (OSError, RuntimeError) as error:
-            feedback.set(str(error)[:120])
-
     button_options = {"bg": "#1c2435", "fg": "#b8cbe4", "activebackground": "#2b3851", "activeforeground": "#ffffff", "relief": "flat", "bd": 0, "padx": 10, "pady": 4, "cursor": "hand2", "font": ("Segoe UI", 9)}
-    startup_button = tk.Button(content, text="Автозагрузка…", command=toggle_startup, state="disabled", **button_options)
-    startup_button.grid(row=2, column=0, sticky="nw", pady=(3, 0))
     release_url = [None]
     update_pending = None
     next_update = 0.0
@@ -1251,9 +1304,9 @@ def run_dashboard():
                     if key == "stt":
                         text += " · автозагрузка: " + ("вкл." if startup_enabled else "выкл." if startup.get("state") == "inactive" else "?")
                     paint(key, value["state"], text)
-                startup_button.configure(text="Отключить автозагрузку" if startup_enabled else "Включить автозагрузку", state="normal")
                 if data.get("message"):
                     feedback.set(data["message"][:120])
+                    feedback_label.configure(fg="#e8bf69")
             except Exception as error:
                 for key in canvases:
                     paint(key, "inactive" if key == "stt" else "unknown", "Нет связи с сервером" if key == "stt" else "Не удалось проверить")
@@ -1270,6 +1323,7 @@ def run_dashboard():
                 release_url[0] = update.get("url") if update.get("state") == "active" else None
                 release_button.configure(state="normal" if release_url[0] else "disabled")
                 feedback.set(update.get("message", "")[:120])
+                feedback_label.configure(fg="#80dec0" if update.get("state") == "inactive" else "#93c8ff" if update.get("state") == "active" else "#e8bf69")
             except Exception as error:
                 feedback.set(f"Обновления: {error}"[:120])
             update_pending = None
@@ -1389,6 +1443,11 @@ def main():
         if sys.stdout:
             print(f"OK: STT {SERVER_VERSION}, Python {sys.version.split()[0]}, models: {len(MODEL_CATALOG)}")
         return 0
+
+    try:
+        ensure_autostart()
+    except OSError:
+        logging.exception("Could not register Voice Studio startup")
 
     stt_already_running = is_port_in_use(HOST, PORT)
     subtitle_service_already_running = is_port_in_use("127.0.0.1", SUBTITLE_PORT)

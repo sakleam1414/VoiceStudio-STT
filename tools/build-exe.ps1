@@ -5,6 +5,8 @@ $buildRoot = Join-Path $projectRoot 'build'
 & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name stt_server `
   --distpath (Join-Path $buildRoot 'dist') --workpath (Join-Path $buildRoot 'work') --specpath $buildRoot `
   --add-data "${projectRoot}\vosk_models.json;." --collect-all vosk --hidden-import _cffi_backend `
+  --add-data "${projectRoot}\assets;assets" --icon "${projectRoot}\assets\voice-studio.ico" `
+  --version-file "${projectRoot}\tools\windows-version.txt" `
   --exclude-module torch --exclude-module torchaudio --exclude-module transformers --exclude-module faster_whisper `
   --exclude-module gigaam --exclude-module nemo --exclude-module numpy --exclude-module scipy --exclude-module pandas `
   --exclude-module matplotlib --exclude-module tensorflow --exclude-module IPython (Join-Path $projectRoot 'stt_server.py')

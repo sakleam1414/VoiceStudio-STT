@@ -1,7 +1,7 @@
 /**
  * @name Microphone
  * @author Codex
- * @version 2.5.0
+ * @version 2.6.0
  * @description Локальная передача микрофона в Vosk, Whisper, wav2vec2 или GigaAM и отображение распознанной речи в субтитрах.
  */
 const fs = require("fs");
@@ -237,7 +237,7 @@ module.exports = class Microphone {
                 <button type="button" class="mic-model-close" id="mic-panel-close" aria-label="Закрыть панель микрофона">×</button>
             </div>
             <div class="mic-service-status">
-                <div class="mic-service-row"><span>stt_server.py</span><span class="mic-service-badge" id="mic-server-badge" data-state="unknown">● Проверка…</span></div>
+                <div class="mic-service-row"><span>Voice Studio</span><span class="mic-service-badge" id="mic-server-badge" data-state="unknown">● Проверка…</span></div>
                 <div class="mic-service-row"><span>Автозагрузка</span><span class="mic-service-badge" id="mic-autostart-badge" data-state="unknown">● Проверка…</span></div>
             </div>
 
@@ -280,7 +280,7 @@ module.exports = class Microphone {
             </button>
             <button type="button" class="mic-btn" id="mic-network-btn">Мой адрес и адреса друзей</button>
             <button type="button" class="mic-btn" id="mic-update-btn">Проверить обновление</button>
-            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.5.0</span></div>
+            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.6.0</span></div>
         `;
 
         const savedPos = BdApi.Data.load("Microphone", "panelPosition");
@@ -328,60 +328,29 @@ module.exports = class Microphone {
         this.renderCatalog();
     }
 
-    refreshAutostartStatus() {
-        if (!this.autostartBadge || !process.env.APPDATA) return;
-        const fs = require("fs");
-        const startupDirectory = path.join(
-            process.env.APPDATA,
-            "Microsoft",
-            "Windows",
-            "Start Menu",
-            "Programs",
-            "Startup"
-        );
-        const expectedTarget = path.join(__dirname, "stt_server.bat").toLocaleLowerCase();
+    async refreshAutostartStatus() {
+        if (!this.autostartBadge || this.autostartStatusPending) return;
+        this.autostartStatusPending = true;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6500);
         try {
-            const windowsDirectory = process.env.WINDIR || process.env.SystemRoot || "C:\\Windows";
-            const registryTool = path.join(windowsDirectory, "System32", "reg.exe");
-            const startupEntries = (fs.existsSync(startupDirectory) ? fs.readdirSync(startupDirectory) : [])
-                .filter(name => /^bd_stt_server\.bat$|^stt_server_autostart\.bat$/i.test(name))
-                .filter(name => fs.readFileSync(path.join(startupDirectory, name), "utf8")
-                    .toLocaleLowerCase()
-                    .includes(expectedTarget));
-            const states = startupEntries.map(name => {
-                try {
-                    const output = require("child_process").execFileSync(registryTool, [
-                        "query",
-                        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder",
-                        "/v",
-                        name
-                    ], { encoding: "utf8", windowsHide: true });
-                    const registryValue = output.match(/REG_BINARY\s+([0-9a-f]+)/i);
-                    if (!registryValue) return "unknown";
-                    const state = Number.parseInt(registryValue[1].slice(0, 2), 16);
-                    if (state === 2 || state === 6) return "active";
-                    if (state === 3 || state === 7) return "inactive";
-                    return "unknown";
-                } catch (error) {
-                    if (error.status === 1) return "active";
-                    throw error;
-                }
-            });
-            const state = states.includes("active")
-                ? "active"
-                : states.every(entryState => entryState === "inactive")
-                    ? "inactive"
-                    : "unknown";
-            this.autostartBadge.dataset.state = state;
-            this.autostartBadge.textContent = state === "active"
-                ? "✓ Автозагрузка: включена"
-                : state === "inactive"
-                    ? "● Автозагрузка: отключена"
-                    : "● Автозагрузка: не проверена";
+            const response = await fetch("http://127.0.0.1:8765/status", {signal: controller.signal});
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            const startup = data.services?.startup;
+            if (!startup) throw new Error("Обновите сервер Voice Studio");
+            if (!this.autostartBadge?.isConnected) return;
+            this.autostartBadge.dataset.state = startup.state;
+            this.autostartBadge.textContent = startup.state === "active" ? "✓ Включена · Voice Studio"
+                : `● ${startup.text || "Проверка недоступна"}`;
         } catch (error) {
-            console.error("[Microphone] Не удалось проверить автозагрузку Windows:", error);
-            this.autostartBadge.dataset.state = "unknown";
-            this.autostartBadge.textContent = "● Автозагрузка: ошибка проверки";
+            if (this.autostartBadge?.isConnected) {
+                this.autostartBadge.dataset.state = "unknown";
+                this.autostartBadge.textContent = "● Запустите Voice Studio";
+            }
+        } finally {
+            clearTimeout(timeout);
+            this.autostartStatusPending = false;
         }
     }
 

@@ -12,6 +12,7 @@ jobs:
           python-version: '3.12'
       - run: python -m py_compile stt_server.py
       - run: python tools/test-server-network.py
+      - run: python tools/test-startup.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -30,3 +31,4 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r stt_requirements.txt
       - run: python tools/test-window-lifetime.py
+      - run: python tools/test-window-brand.py
