@@ -11,6 +11,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m py_compile stt_server.py
+      - run: python tools/bundle-network.py --check
       - run: python tools/test-server-network.py
       - run: python tools/test-startup.py
       - uses: actions/setup-node@v4

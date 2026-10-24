@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import runpy
 import shutil
 import zipfile
 
@@ -21,6 +22,7 @@ def version(value):
     return value
 
 def set_versions(release=None, server=None, microphone=None, subtitles=None):
+    runpy.run_path(str(ROOT / 'tools/bundle-network.py'))['bundle']()
     file = ROOT / 'VERSION.json'
     versions = json.loads(file.read_text(encoding='utf-8-sig'))
     for component, value in [('release', release), ('server', server), ('microphone', microphone), ('subtitles', subtitles)]:

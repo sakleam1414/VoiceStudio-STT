@@ -1,4 +1,4 @@
-// Shared networking helper. BetterDiscord supports absolute file paths.
+// Shared networking source, bundled into both plugins by tools/bundle-network.py.
 const fs = require('fs');
 const path = require('path');
 
