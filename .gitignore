@@ -1,0 +1,14 @@
+models/
+*.log
+__pycache__/
+*.pyc
+portable-build/
+*.spec
+.env
+
+build/
+release/
+.stt-update-*/
+*.exe
+*.zip
+build-log.txt

@@ -1,0 +1,21 @@
+[
+  {"id":"vosk-model-small-ru-0.22","name":"vosk-model-small-ru-0.22","language":"Русский","size":"45 МБ","engine":"vosk","url":"https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"},
+  {"id":"vosk-model-ru-0.42","name":"vosk-model-ru-0.42","language":"Русский","size":"1,8 ГБ","engine":"vosk","url":"https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip"},
+  {"id":"vosk-model-ru-0.22","name":"vosk-model-ru-0.22","language":"Русский","size":"1,5 ГБ","engine":"vosk","url":"https://alphacephei.com/vosk/models/vosk-model-ru-0.22.zip"},
+  {"id":"vosk-model-ru-0.10","name":"vosk-model-ru-0.10","language":"Русский","size":"2,5 ГБ","engine":"vosk","url":"https://alphacephei.com/vosk/models/vosk-model-ru-0.10.zip"},
+  {"id":"faster-whisper-tiny-ru","name":"faster-whisper-tiny","language":"Русский","size":"72 МБ","engine":"whisper","model":"Systran/faster-whisper-tiny","url":"https://huggingface.co/Systran/faster-whisper-tiny"},
+  {"id":"faster-whisper-base-ru","name":"faster-whisper-base","language":"Русский","size":"139 МБ","engine":"whisper","model":"Systran/faster-whisper-base","url":"https://huggingface.co/Systran/faster-whisper-base"},
+  {"id":"faster-whisper-small-ru","name":"faster-whisper-small","language":"Русский","size":"462 МБ","engine":"whisper","model":"Systran/faster-whisper-small","url":"https://huggingface.co/Systran/faster-whisper-small"},
+  {"id":"faster-whisper-medium-ru","name":"faster-whisper-medium","language":"Русский","size":"1,42 ГБ","engine":"whisper","model":"Systran/faster-whisper-medium","url":"https://huggingface.co/Systran/faster-whisper-medium"},
+  {"id":"faster-whisper-large-v1-ru","name":"faster-whisper-large-v1","language":"Русский","size":"2,87 ГБ","engine":"whisper","model":"Systran/faster-whisper-large-v1","url":"https://huggingface.co/Systran/faster-whisper-large-v1"},
+  {"id":"faster-whisper-large-v2-ru","name":"faster-whisper-large-v2","language":"Русский","size":"2,87 ГБ","engine":"whisper","model":"Systran/faster-whisper-large-v2","url":"https://huggingface.co/Systran/faster-whisper-large-v2"},
+  {"id":"faster-whisper-large-v3-ru","name":"faster-whisper-large-v3","language":"Русский","size":"2,87 ГБ","engine":"whisper","model":"Systran/faster-whisper-large-v3","url":"https://huggingface.co/Systran/faster-whisper-large-v3"},
+  {"id":"wav2vec2-large-xlsr-53-ru","name":"wav2vec2-large-xlsr-53-russian","language":"Русский","size":"1,26 ГБ","engine":"wav2vec2","model":"jonatasgrosman/wav2vec2-large-xlsr-53-russian","url":"https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-russian"},
+  {"id":"gigaam-v3-e2e-rnnt-ru","name":"GigaAM-v3 E2E RNNT","language":"Русский","size":"Загрузка при первом запуске","engine":"gigaam","model":"v3_e2e_rnnt","url":"https://huggingface.co/ai-sage/GigaAM-v3"},
+  {"id":"gigaam-v3-e2e-ctc-ru","name":"GigaAM-v3 E2E CTC","language":"Русский","size":"Загрузка при первом запуске","engine":"gigaam","model":"v3_e2e_ctc","url":"https://huggingface.co/ai-sage/GigaAM-v3"},
+  {"id":"gigaam-v3-rnnt-ru","name":"GigaAM-v3 RNNT","language":"Русский","size":"Загрузка при первом запуске","engine":"gigaam","model":"v3_rnnt","url":"https://huggingface.co/ai-sage/GigaAM-v3"},
+  {"id":"gigaam-v3-ctc-ru","name":"GigaAM-v3 CTC","language":"Русский","size":"Загрузка при первом запуске","engine":"gigaam","model":"v3_ctc","url":"https://huggingface.co/ai-sage/GigaAM-v3"},
+  {"id":"faster-whisper-large-v3-turbo-ru","name":"Faster-Whisper Large v3 Turbo","language":"Русский","size":"≈1,6 ГБ","engine":"whisper","model":"dropbox-dash/faster-whisper-large-v3-turbo","url":"https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo"},
+  {"id":"nemo-ru-conformer-ctc-large","name":"NVIDIA NeMo Conformer CTC Large · Русский","language":"Русский","size":"≈500 МБ","engine":"nemo","model":"stt_ru_conformer_ctc_large","url":"https://huggingface.co/nvidia/stt_ru_conformer_ctc_large"},
+  {"id":"meta-mms-1b-ru","name":"Meta MMS-1B · Русский (rus)","language":"Русский","size":"≈3,8 ГБ","engine":"mms","model":"facebook/mms-1b-all","url":"https://huggingface.co/facebook/mms-1b-all"}
+]

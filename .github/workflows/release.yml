@@ -1,0 +1,35 @@
+name: Publish release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify tag
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          version = json.loads(Path('VERSION.json').read_text(encoding='utf-8-sig'))['release_version']
+          assert os.environ['GITHUB_REF_NAME'] == 'v'+version, 'Tag must match VERSION.json'
+      - run: python -m pip install -r stt_requirements.txt pyinstaller==6.21.0
+      - run: ./tools/build-exe.ps1
+        shell: pwsh
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title "Voice Studio $tag" --generate-notes }
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
+          gh release upload $tag ./release/* --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Asset upload failed' }

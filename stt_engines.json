@@ -1,0 +1,129 @@
+[
+  {
+    "name": "GigaAM",
+    "status": "Русская модель есть",
+    "details": "Открой каталог движка, выбери вариант GigaAM-v3 и нажми «Скачать выбранную».",
+    "backend": "gigaam",
+    "url": "https://huggingface.co/ai-sage/GigaAM-v3"
+  },
+  {
+    "name": "OpenAI Whisper",
+    "status": "Русская модель есть",
+    "details": "Модели Whisper запускаются через установленный Faster-Whisper. Выбери размер и скачай модель.",
+    "backend": "whisper",
+    "url": "https://github.com/openai/whisper"
+  },
+  {
+    "name": "Faster-Whisper",
+    "status": "Русские модели есть",
+    "details": "Выбери Tiny, Base, Small, Medium, Large или Large v3 Turbo и нажми «Скачать выбранную».",
+    "backend": "whisper",
+    "url": "https://huggingface.co/Systran"
+  },
+  {
+    "name": "Vosk",
+    "status": "Русские модели есть",
+    "details": "Выбери русскую модель Vosk в подкаталоге и нажми «Скачать выбранную».",
+    "backend": "vosk",
+    "url": "https://alphacephei.com/vosk/models"
+  },
+  {
+    "name": "wav2vec2 / XLS-R",
+    "status": "Русская модель есть",
+    "details": "Открой подкаталог и скачай русскую модель XLS-R.",
+    "backend": "wav2vec2",
+    "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-russian"
+  },
+  {
+    "name": "NVIDIA NeMo",
+    "status": "Русская модель добавлена",
+    "details": "Модель Conformer CTC Large загружается через NeMo. Нужна библиотека nemo_toolkit[asr].",
+    "backend": "nemo",
+    "url": "https://github.com/NVIDIA/NeMo"
+  },
+  {
+    "name": "Silero STT",
+    "status": "Русская ASR-модель не подтверждена",
+    "details": "Перед подключением нужно отдельно проверить актуальные модели STT: каталог Silero содержит также модели других речевых задач.",
+    "url": "https://github.com/snakers4/silero-models"
+  },
+  {
+    "name": "Meta MMS",
+    "status": "Русский адаптер добавлен",
+    "details": "MMS-1B загружается с адаптером rus. Модель около 3,8 ГБ; нужны torch и transformers.",
+    "backend": "mms",
+    "url": "https://huggingface.co/facebook/mms-1b-all"
+  },
+  {
+    "name": "Meta Omnilingual ASR",
+    "status": "Отдельная интеграция",
+    "details": "Мультиязычное семейство ASR; требуется собственный серверный адаптер и проверка выбранной модели.",
+    "url": "https://github.com/facebookresearch/omnilingual-asr"
+  },
+  {
+    "name": "SenseVoice",
+    "status": "Русский не заявлен для SenseVoiceSmall",
+    "details": "Официальная карточка SenseVoiceSmall перечисляет китайский, кантонский, английский, японский и корейский.",
+    "url": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall"
+  },
+  {
+    "name": "SeamlessM4T",
+    "status": "Отдельная интеграция",
+    "details": "Мультимодальная модель перевода и ASR; потребуется отдельная реализация задач и проверка русского входного языка.",
+    "url": "https://huggingface.co/facebook/seamless-m4t-v2-large"
+  },
+  {
+    "name": "SpeechBrain",
+    "status": "Фреймворк, не модель",
+    "details": "Для распознавания нужен отдельный совместимый checkpoint с подтверждённой поддержкой русского.",
+    "url": "https://github.com/speechbrain/speechbrain"
+  },
+  {
+    "name": "ESPnet",
+    "status": "Фреймворк, не модель",
+    "details": "Нужны отдельная ASR-модель, рецепт и интеграция с локальным сервером.",
+    "url": "https://github.com/espnet/espnet"
+  },
+  {
+    "name": "FunASR",
+    "status": "Фреймворк, не отдельная модель",
+    "details": "Инструментарий распознавания; конкретная модель и поддержка русского зависят от выбранного checkpoint.",
+    "url": "https://github.com/modelscope/FunASR"
+  },
+  {
+    "name": "sherpa-onnx",
+    "status": "Рантайм, не модель",
+    "details": "Локальный ASR-рантайм. Нужна совместимая русская модель, экспортированная в поддерживаемый формат.",
+    "url": "https://github.com/k2-fsa/sherpa-onnx"
+  },
+  {
+    "name": "Moonshine",
+    "status": "Русский не подтверждён",
+    "details": "Проверенная карточка Moonshine Tiny описывает англоязычную модель.",
+    "url": "https://huggingface.co/moonshine-ai/moonshine-tiny"
+  },
+  {
+    "name": "Voxtral",
+    "status": "Русский не заявлен",
+    "details": "В официальном списке языков Voxtral Mini русский не указан; модель также требует отдельного тяжёлого рантайма.",
+    "url": "https://huggingface.co/mistralai/Voxtral-Mini-3B-2507"
+  },
+  {
+    "name": "Qwen Audio / Omni",
+    "status": "Поддержка русского не подтверждена",
+    "details": "Аудио-языковая модель, а не готовая локальная потоковая STT-интеграция.",
+    "url": "https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct"
+  },
+  {
+    "name": "Kaldi",
+    "status": "Низкоуровневый движок",
+    "details": "Нужна отдельная модель и настройка декодера; Vosk уже использует Kaldi.",
+    "url": "https://github.com/kaldi-asr/kaldi"
+  },
+  {
+    "name": "Whisper.cpp",
+    "status": "Другой рантайм Whisper",
+    "details": "Запускает модели Whisper через C++; это альтернатива реализации, а не отдельная модель.",
+    "url": "https://github.com/ggml-org/whisper.cpp"
+  }
+]
