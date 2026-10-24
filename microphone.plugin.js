@@ -1,7 +1,7 @@
 /**
  * @name Microphone
  * @author Codex
- * @version 2.6.0
+ * @version 2.7.0
  * @description Локальная передача микрофона в Vosk, Whisper, wav2vec2 или GigaAM и отображение распознанной речи в субтитрах.
  */
 const fs = require("fs");
@@ -15,13 +15,16 @@ if (!Array.isArray(SPEECH_ENGINES) || SPEECH_ENGINES.length === 0) {
     throw new Error("The speech engine directory is missing or invalid: stt_engines.json");
 }
 const VOSK_CATALOG_VERSION = 11;
-const UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
 
 module.exports = class Microphone {
     start() {
         this.stop();
-        // The shared file may have been replaced together with this plugin.
-        if (require.cache && require.resolve) delete require.cache[require.resolve("./stt_updates")];
+        // BetterDiscord's loader supports absolute paths, but returns undefined for ./ paths.
+        const helperPath = require("path").join(__dirname, "stt_updates.js");
+        const cache = window.require?.cache || require.cache;
+        if (cache) delete cache[helperPath];
+        this.shared = require(helperPath);
+        if (!this.shared?.network) throw new Error("Не найден файл stt_updates.js. Распакуйте обновление Voice Studio целиком.");
         this.isRecording = false;
         this.audioContext = null;
         this.mediaStream = null;
@@ -44,8 +47,6 @@ module.exports = class Microphone {
         this.subtitleBridgePeers = [];
         this.subtitleBridgePeersAt = 0;
         this.subtitleBridgeRequest = null;
-        this.updateCheckTimer = null;
-        this.lastUpdateInfo = null;
 
         this.selectedDeviceId = BdApi.Data.load("Microphone", "deviceId") || "default";
         this.sttUrl = "ws://127.0.0.1:5000";
@@ -206,8 +207,6 @@ module.exports = class Microphone {
         this.onViewportResize = () => { if (!this.panel.hidden) this.keepInViewport(); };
         window.addEventListener("resize", this.onViewportResize);
         this.checkServerStatus();
-        void this.checkForUpdates();
-        this.updateCheckTimer = setInterval(() => this.checkForUpdates(), UPDATE_CHECK_TTL);
         this.refreshAutostartStatus();
         this.serverStatusTimer = setInterval(() => {
             this.checkServerStatus();
@@ -279,8 +278,7 @@ module.exports = class Microphone {
                 Начать распознавание
             </button>
             <button type="button" class="mic-btn" id="mic-network-btn">Мой адрес и адреса друзей</button>
-            <button type="button" class="mic-btn" id="mic-update-btn">Проверить обновление</button>
-            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.6.0</span></div>
+            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.7.0</span></div>
         `;
 
         const savedPos = BdApi.Data.load("Microphone", "panelPosition");
@@ -323,8 +321,7 @@ module.exports = class Microphone {
         };
 
         this.toggleBtn.onclick = () => this.toggleRecording();
-        this.panel.querySelector("#mic-network-btn").onclick = () => require("./stt_updates").showNetwork(__dirname);
-        this.panel.querySelector("#mic-update-btn").onclick = () => require("./stt_updates").show(__dirname, "microphone");
+        this.panel.querySelector("#mic-network-btn").onclick = () => this.shared.showNetwork(__dirname);
         this.renderCatalog();
     }
 
@@ -414,17 +411,8 @@ module.exports = class Microphone {
         }
     }
 
-    async checkForUpdates() {
-        try {
-            return await require("./stt_updates").check(__dirname, "microphone");
-        } catch (error) {
-            console.debug("[Microphone] Проверка обновления недоступна:", error.message);
-            return null;
-        }
-    }
-
     getSettingsPanel() {
-        return require("./stt_updates").panel(__dirname, "microphone");
+        return this.shared.panel(__dirname);
     }
 
     createModelModal() {
@@ -683,7 +671,7 @@ module.exports = class Microphone {
             const states = BdApi.Webpack.getStore("VoiceStateStore")?.getVoiceStatesForChannel?.(channelId);
             const voiceStates = states instanceof Map ? [...states.values()] : Object.values(states || {});
             const ids = voiceStates.map(state => state.userId || state.user_id).filter(Boolean);
-            await require("./stt_updates").network(__dirname).send(payload, ids);
+            await this.shared.network(__dirname).send(payload, ids);
         }).catch(error => console.warn("[Microphone] Связь с друзьями:", error.message));
         this.subtitleBridgeRequest = operation;
         try { await operation; }
@@ -1357,8 +1345,6 @@ module.exports = class Microphone {
         clearInterval(this.timer);
         clearInterval(this.serverStatusTimer);
         this.serverStatusTimer = null;
-        clearInterval(this.updateCheckTimer);
-        this.updateCheckTimer = null;
         if (this.serverStatusSocket) {
             const socket = this.serverStatusSocket;
             this.serverStatusSocket = null;

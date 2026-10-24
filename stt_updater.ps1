@@ -1,6 +1,6 @@
 param(
     [string]$Directory = $PSScriptRoot,
-    [ValidateSet('server','microphone','subtitles')][string]$Component = 'server',
+    [ValidateSet('server','microphone','subtitles','all')][string]$Component = 'server',
     [string]$Repository = 'sakleam1414/VoiceStudio-STT',
     [switch]$Install,
     [switch]$LibraryOnly
@@ -12,6 +12,7 @@ $env:PSModulePath = (Join-Path $PSHOME 'Modules') + [IO.Path]::PathSeparator + $
 
 function Get-ComponentVersion([string]$Root, [string]$Name) {
     $file = @{server='stt_server.py';microphone='microphone.plugin.js';subtitles='subtitles.plugin.js'}[$Name]
+    if (-not [IO.File]::Exists((Join-Path $Root $file))) { return [version]'0.0.0' }
     $text = [IO.File]::ReadAllText((Join-Path $Root $file))
     $pattern = if ($Name -eq 'server') {'SERVER_VERSION\s*=\s*"(\d+\.\d+\.\d+)"'} else {'@version\s+(\d+\.\d+\.\d+)'}
     if ($text -notmatch $pattern) { throw "Version not found: $file" }
@@ -77,6 +78,25 @@ function Install-StagedFiles([string]$Root, [string]$Stage, $Files) {
     return $backup
 }
 
+function Get-UpdatePlan([string]$Root, $Manifest, [string]$Selection) {
+    $names = if ($Selection -eq 'all') { @('server','microphone','subtitles') } else { @($Selection) }
+    $components = @{}
+    $files = @{}
+    foreach ($name in $names) {
+        $checked = @(Get-CheckedFiles $Manifest $name)
+        $local = Get-ComponentVersion $Root $name
+        $remote = [version]$Manifest.components.$name.version
+        $available = $remote -gt $local
+        $components[$name] = @{current="$local";version="$remote";available=$available}
+        if (-not $available) { continue }
+        foreach ($file in $checked) {
+            if ($files.ContainsKey($file.name) -and $files[$file.name].sha256 -ne $file.sha256) { throw 'Conflicting shared file hashes' }
+            $files[$file.name] = $file
+        }
+    }
+    return @{components=$components;files=@($files.Values);available=($files.Count -gt 0)}
+}
+
 if ($LibraryOnly) { return }
 $client = $null
 $mutex = $null
@@ -85,7 +105,6 @@ $restart = $false
 try {
     if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid repository' }
     $Directory = [IO.Path]::GetFullPath($Directory)
-    $local = Get-ComponentVersion $Directory $Component
     $api = "https://api.github.com/repos/$Repository/releases/latest"
     $headers = @{'User-Agent'='VoiceStudio-STT';Accept='application/vnd.github+json'}
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -94,10 +113,15 @@ try {
     $asset = @($release.assets | Where-Object {$_.name -eq 'update-manifest.json'})
     if ($asset.Count -ne 1 -or $asset[0].browser_download_url -ne ($base+'update-manifest.json')) { throw 'Release has no update manifest' }
     $manifest = Invoke-RestMethod -Uri $asset[0].browser_download_url -Headers $headers -TimeoutSec 20
-    $files = @(Get-CheckedFiles $manifest $Component)
-    $remote = [version]$manifest.components.$Component.version
-    if (-not $Install -or $remote -le $local) {
-        @{available=($remote -gt $local);current="$local";version="$remote";component=$Component;url=$release.html_url} | ConvertTo-Json -Compress
+    $plan = Get-UpdatePlan $Directory $manifest $Component
+    $files = @($plan.files)
+    $result = @{available=$plan.available;components=$plan.components;component=$Component;url=$release.html_url}
+    if ($Component -ne 'all') {
+        $result.current=$plan.components[$Component].current
+        $result.version=$plan.components[$Component].version
+    }
+    if (-not $Install -or -not $plan.available) {
+        $result | ConvertTo-Json -Depth 8 -Compress
         exit 0
     }
     $hash = [Security.Cryptography.SHA256]::Create()
@@ -117,7 +141,7 @@ try {
         $client.DownloadFile($download[0].browser_download_url, $target)
         if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $file.sha256) { throw "SHA256 mismatch: $($file.name)" }
     }
-    if ($Component -eq 'server') {
+    if ($plan.components.ContainsKey('server') -and $plan.components.server.available) {
         # Downloads and checks complete first. Only stop this installation.
         $exe = Join-Path $Directory 'stt_server.exe'
         $script = Join-Path $Directory 'stt_server.py'
@@ -131,7 +155,9 @@ try {
         foreach ($entry in $processes) { Wait-Process -Id $entry.ProcessId -Timeout 15 -ErrorAction SilentlyContinue }
     }
     $backup = Install-StagedFiles $Directory $stage $files
-    @{installed=$true;component=$Component;previous="$local";version="$remote";backup=$backup} | ConvertTo-Json -Compress
+    $result.installed=$true
+    $result.backup=$backup
+    $result | ConvertTo-Json -Depth 8 -Compress
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1

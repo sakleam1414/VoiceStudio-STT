@@ -1,15 +1,19 @@
 /**
  * @name Subtitles
  * @author Codex
- * @version 1.9.0
+ * @version 1.10.0
  * @description Чистые субтитры. ЛКМ — окно субтитров, ПКМ — участники и автоматический поиск устройств.
  */
-const SUBTITLES_UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
 
 module.exports = class Subtitles {
     start() {
         this.stop();
-        if (require.cache && require.resolve) delete require.cache[require.resolve("./stt_updates")];
+        // BetterDiscord's loader supports absolute paths, but returns undefined for ./ paths.
+        const helperPath = require("path").join(__dirname, "stt_updates.js");
+        const cache = window.require?.cache || require.cache;
+        if (cache) delete cache[helperPath];
+        this.shared = require(helperPath);
+        if (!this.shared?.network) throw new Error("Не найден файл stt_updates.js. Распакуйте обновление Voice Studio целиком.");
         window.__bdSubtitlesActive = (window.__bdSubtitlesActive || 0) + 1;
         this.isSubtitlePluginActive = true;
         const savedUsers = BdApi.Data.load("Subtitles", "selectedUsers");
@@ -25,8 +29,6 @@ module.exports = class Subtitles {
         this.tailscalePeerAddresses = [];
         this.peerDiscoveryMessage = null;
         this.serviceError = null;
-        this.updateCheckTimer = null;
-        this.lastUpdateInfo = null;
 
         this.button = document.createElement("button");
         this.button.type = "button";
@@ -55,8 +57,6 @@ module.exports = class Subtitles {
         window.addEventListener("bd-subtitle-received", this.onSubtitleEvent);
 
         this.startSubtitleService();
-        void this.checkForUpdates();
-        this.updateCheckTimer = setInterval(() => this.checkForUpdates(), SUBTITLES_UPDATE_CHECK_TTL);
 
         BdApi.DOM.addStyle("Subtitles", `
             .subtitles-voice-button {
@@ -176,17 +176,8 @@ module.exports = class Subtitles {
         }, 15000);
     }
 
-    async checkForUpdates() {
-        try {
-            return await require("./stt_updates").check(__dirname, "subtitles");
-        } catch (error) {
-            console.debug("[Subtitles] Проверка обновления недоступна:", error.message);
-            return null;
-        }
-    }
-
     getSettingsPanel() {
-        return require("./stt_updates").panel(__dirname, "subtitles");
+        return this.shared.panel(__dirname);
     }
 
     async requestSubtitleService(path, options = {}, timeoutMs = 2500) {
@@ -255,12 +246,12 @@ module.exports = class Subtitles {
     }
 
     async refreshTailscalePeers() {
-        const result = await require("./stt_updates").network(__dirname).refresh();
+        const result = await this.shared.network(__dirname).refresh();
         this.tailscalePeers = new Map([...result.peers].map(([id, peers]) => [id, peers.map(peer => peer.address)]));
         this.peerSources = new Map([...result.peers].map(([id, peers]) => [id, peers[0]?.source]));
         this.tailscalePeerAddresses = result.addresses;
         this.peerDiscoveryMessage = result.discoveryError && !result.peers.size
-            ? `Автопоиск: ${result.discoveryError}. Можно указать адрес друга вручную.`
+            ? "Автопоиск недоступен. Нажмите «Адрес» возле друга и вставьте его адрес Tailscale."
             : result.addresses.length && !result.peers.size
                 ? "Устройства найдены, но серверы не отвечают. Проверьте сервер друга или укажите его адрес."
                 : null;
@@ -303,7 +294,7 @@ module.exports = class Subtitles {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 1500);
         const base = address === "127.0.0.1" ? `http://127.0.0.1:${this.port}`
-            : require("./stt_updates").parsePeerAddress(address).url;
+            : this.shared.parsePeerAddress(address).url;
         try {
             const response = await fetch(`${base}/ping`, { signal: controller.signal });
             if (!response.ok) return null;
@@ -324,7 +315,7 @@ module.exports = class Subtitles {
         const states = BdApi.Webpack.getStore("VoiceStateStore")?.getVoiceStatesForChannel?.(channelId);
         const voiceStates = states instanceof Map ? [...states.values()] : Object.values(states || {});
         const ids = voiceStates.map(state => state.userId || state.user_id).filter(Boolean);
-        try { await require("./stt_updates").network(__dirname).send(payload, ids); }
+        try { await this.shared.network(__dirname).send(payload, ids); }
         catch(error) { this.reportServiceError(error); }
     }
 
@@ -459,11 +450,11 @@ module.exports = class Subtitles {
             box.dataset.state = "checking";
             text.textContent = "● Автоматически ищу устройства Tailscale…";
         } else if (error) {
-            box.dataset.state = "error";
-            text.textContent = `● Автопоиск устройств: ${error}`;
+            box.dataset.state = "partial";
+            text.textContent = "● Добавьте адрес друга вручную кнопкой «Адрес» возле имени.";
         } else if (unknown > 0) {
             box.dataset.state = "partial";
-            text.textContent = `● Субтитры доступны: ${online}/${total} · запусти плагин на остальных ПК`;
+            text.textContent = `● На связи: ${online}/${total} · для подключения нажмите «Адрес» возле друга`;
         } else if (online === total) {
             box.dataset.state = "ok";
             text.textContent = `✓ Субтитры в сети (${online}/${total})`;
@@ -487,16 +478,11 @@ module.exports = class Subtitles {
         hint.className = "subtitles-hint";
         hint.textContent = "Выберите, чью речь показывать в субтитрах.";
         this.participantMenu.append(hint);
-        const updates = document.createElement("button");
-        updates.type = "button";
-        updates.className = "subtitles-network-refresh";
-        updates.textContent = "Обновление Subtitles · 1.9.0";
-        updates.onclick = () => require("./stt_updates").show(__dirname, "subtitles");
         const network = document.createElement("button");
         network.type = "button"; network.className = "subtitles-network-refresh";
         network.textContent = "Мой адрес и адреса друзей";
-        network.onclick = () => require("./stt_updates").showNetwork(__dirname);
-        this.participantMenu.append(network, updates);
+        network.onclick = () => this.shared.showNetwork(__dirname);
+        this.participantMenu.append(network);
 
         const serverStatus = document.createElement("div");
         serverStatus.className = "subtitles-server-status";
@@ -590,7 +576,7 @@ module.exports = class Subtitles {
                 address.className = "subtitles-network-refresh";
                 address.textContent = "Адрес";
                 address.setAttribute("aria-label", `Адрес друга: ${user.globalName || user.username || "Участник"}`);
-                address.onclick = () => require("./stt_updates").showNetwork(__dirname, {userId: user.id, name: user.globalName || user.username || "Участник"});
+                address.onclick = () => this.shared.showNetwork(__dirname, {userId: user.id, name: user.globalName || user.username || "Участник"});
                 row.append(address);
             }
             row.append(captions);
@@ -613,7 +599,7 @@ module.exports = class Subtitles {
         try {
             await this.refreshTailscalePeers();
         } catch (error) {
-            peerDiscoveryError = error.message;
+            peerDiscoveryError = "Не удалось найти друга. Нажмите «Адрес» и вставьте его адрес Tailscale.";
             this.reportServiceError(error);
         }
         peerDiscoveryError ||= this.peerDiscoveryMessage;
@@ -642,8 +628,8 @@ module.exports = class Subtitles {
                 online: isSelfRow(user) ? "Сервер субтитров работает на этом ПК" : (this.peerSources?.get(user.id) === "manual" ? "На связи · ручной адрес" : "На связи · найден автоматически"),
                 offline: isSelfRow(user) ? "Сервер субтитров не отвечает на этом ПК" : "Устройство недоступно или сервер субтитров не запущен",
                 unknown: isSelfRow(user)
-                    ? (peerDiscoveryError || "Не удалось проверить сервер на этом ПК")
-                    : (peerDiscoveryError || "Друг не найден. Нажмите «Адрес» или проверьте его сервер.")
+                    ? "Не удалось проверить сервер на этом ПК"
+                    : "Друг не найден. Нажмите «Адрес» и вставьте его адрес Tailscale."
             };
             this.setParticipantState(row, state, labels[state]);
             presence.textContent = online ? "✓" : state === "unknown" ? "●" : "×";
@@ -767,8 +753,6 @@ module.exports = class Subtitles {
             this.isSubtitlePluginActive = false;
         }
         clearInterval(this.timer);
-        clearInterval(this.updateCheckTimer);
-        this.updateCheckTimer = null;
         clearInterval(this.subtitleServiceTimer);
         clearTimeout(this.placementTimer);
         this.observer?.disconnect();

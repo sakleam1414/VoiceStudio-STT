@@ -20,6 +20,7 @@ jobs:
       - run: node --check subtitles.plugin.js
       - run: node --check stt_updates.js
       - run: node tools/test-network.cjs
+      - run: node tools/test-bd-loader.cjs
   updater:
     runs-on: windows-latest
     steps:

@@ -34,16 +34,19 @@ with tempfile.TemporaryDirectory(prefix='stt-widgets-') as temp:
                         yield from walk(child)
                 widgets=list(walk(root))
                 canvases=[w for w in widgets if isinstance(w,tk.Canvas)]
-                assert len(canvases)==3
+                assert len(canvases)==5
                 text=[canvas.itemcget(item,'text') for canvas in canvases for item in canvas.find_all() if canvas.type(item)=='text']
                 assert any('Запущен' in value and 'выкл.' in value for value in text),text
                 assert all(len(canvas.find_all())==3 for canvas in canvases)
                 assert root.title()=='Voice Studio · Речь и субтитры'
                 assert hasattr(root, 'brand_image')
                 buttons=[w.cget('text') for w in widgets if isinstance(w,tk.Button)]
-                assert sorted(buttons)==sorted(['Установить','Обновить ↻']),buttons
-                assert root.winfo_reqwidth()<=820,root.winfo_reqwidth()
-                assert root.winfo_reqheight()<=214,root.winfo_reqheight()
+                assert sorted(buttons)==sorted(['Установить','Проверить ↻']),buttons
+                assert root.winfo_reqwidth()<=900,root.winfo_reqwidth()
+                assert root.winfo_reqheight()<=296,root.winfo_reqheight()
+                assert any('Актуальная версия' in value for value in text),text
+                assert any('Старая версия' in value for value in text)==expected_available,text
+                assert next(w for w in widgets if isinstance(w,tk.Button) and w.cget('text')=='Установить').cget('state')==('normal' if expected_available else 'disabled')
                 assert not root.winfo_viewable()
                 results.append((root.winfo_reqwidth(),root.winfo_reqheight()))
             except Exception as error:
@@ -52,9 +55,15 @@ with tempfile.TemporaryDirectory(prefix='stt-widgets-') as temp:
                 root.tk.call(root.protocol('WM_DELETE_WINDOW'))
         root.after(1000,inspect)
         return root
-    with patch.object(tk,'Tk',make_root),patch.object(module.urllib.request,'urlopen',lambda *args,**kwargs:io.BytesIO(json.dumps(payload).encode())):
+    update={'state':'active','message':'Доступно обновление Microphone','components':{'subtitles':{'current':'1.9.0','version':'1.9.0','available':False},'microphone':{'current':'1.4.0','version':'2.7.0','available':True}}}
+    expected_available=True
+    with patch.object(tk,'Tk',make_root),patch.object(module,'check_for_update',lambda *a:update),patch.object(module.urllib.request,'urlopen',lambda *args,**kwargs:io.BytesIO(json.dumps(payload).encode())):
+        module.run_dashboard()
+        expected_available=False
+        update['state']='inactive'
+        update['components']['microphone']={'current':'2.7.0','version':'2.7.0','available':False}
         module.run_dashboard()
     logging.shutdown()
     assert not errors,errors
     assert results
-    print('PASS: withdrawn native window, three badges, status update, branded icon/title, no startup toggle, compact size, clean close.',results)
+    print('PASS: withdrawn native window, five badges, status update, branded icon/title, no startup toggle, compact size, clean close.',results)

@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.7.0"
+SERVER_VERSION = "1.8.0"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -91,7 +91,7 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.7.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.8.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -324,15 +324,36 @@ def run_component_update(install=False):
         raise RuntimeError("Рядом с сервером отсутствует stt_updater.ps1")
     executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     args = [str(executable), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(updater),
-            "-Directory", str(APP_DIR), "-Component", "server", "-Repository", get_update_settings()["repository"]]
+            "-Directory", str(APP_DIR), "-Component", "all", "-Repository", get_update_settings()["repository"]]
     if install:
         args.append("-Install")
-        subprocess.Popen(args, cwd=APP_DIR, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return
-    result = subprocess.run(args, capture_output=True, timeout=45, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    result = subprocess.run(args, capture_output=True, timeout=240 if install else 60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if result.returncode:
         raise RuntimeError(result.stderr.decode("utf-8", "replace").strip()[:180] or "GitHub недоступен")
     return json.loads(result.stdout.decode("utf-8-sig"))
+
+
+def installed_component_versions():
+    import re
+    versions = {"server": SERVER_VERSION}
+    for name, filename in (("microphone", "microphone.plugin.js"), ("subtitles", "subtitles.plugin.js")):
+        try:
+            match = re.search(r"@version\s+(\d+\.\d+\.\d+)", (APP_DIR / filename).read_text(encoding="utf-8-sig"))
+            versions[name] = match[1] if match else None
+        except OSError:
+            versions[name] = None
+    return versions
+
+
+def component_badge(component):
+    current = component.get("current")
+    if not current or current == "0.0.0":
+        return "unknown", "Не установлен · требуется установка"
+    if component.get("available"):
+        return "outdated", f"v{current} → v{component['version']} · Старая версия"
+    if component.get("version"):
+        return "active", f"v{current} · Актуальная версия"
+    return "unknown", f"v{current} · Не удалось проверить"
 
 
 def check_for_update(force=False):
@@ -341,15 +362,19 @@ def check_for_update(force=False):
         return update_cache
     repository = get_update_settings()["repository"]
     result = {"state": "unknown", "version": SERVER_VERSION, "repository": repository,
-              "url": f"https://github.com/{repository}/releases", "message": "Проверка обновления…"}
+              "url": f"https://github.com/{repository}/releases", "message": "Проверка обновлений…",
+              "components": {name: {"current": version} for name, version in installed_component_versions().items()}}
     try:
         remote = run_component_update()
         result.update(remote)
         result["state"] = "active" if remote["available"] else "inactive"
-        result["message"] = (f"Сервер: {remote['current']} → {remote['version']} · нажмите «Установить»"
-                             if remote["available"] else "Установлена последняя версия сервера.")
+        names = {"server": "сервер", "microphone": "Microphone", "subtitles": "Subtitles"}
+        outdated = [names[name] for name, info in remote["components"].items() if info["available"]]
+        result["message"] = ("Доступно обновление: " + ", ".join(outdated) + ". Нажмите «Установить»."
+                             if outdated else "Сервер и плагины обновлены. Установлены актуальные версии.")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        result["message"] = f"Обновления: {error}"
+        logging.warning("Update check failed: %s", error)
+        result["message"] = "Не удалось проверить обновления. Проверьте интернет и нажмите «Проверить»."
     update_cache = result
     update_cache_at = time.monotonic()
     return result
@@ -1203,14 +1228,14 @@ def run_dashboard():
     root.title("Voice Studio · Речь и субтитры")
     configure_window_brand(root)
     root.configure(bg="#10131e")
-    root.geometry("820x214")
-    root.minsize(760, 214)
+    root.geometry("900x296")
+    root.minsize(860, 296)
     root.resizable(True, False)
     root.option_add("*Font", ("Segoe UI", 10))
     content = tk.Frame(root, bg="#10131e")
     content.pack(fill="both", expand=True, padx=20, pady=(16, 8))
     content.columnconfigure(0, weight=1)
-    content.columnconfigure(1, minsize=415)
+    content.columnconfigure(1, minsize=475)
     brand = tk.Frame(content, bg="#10131e")
     brand.grid(row=0, column=0, rowspan=2, sticky="nw", pady=(2, 8))
     try:
@@ -1228,8 +1253,8 @@ def run_dashboard():
     services = tk.Frame(content, bg="#10131e")
     services.grid(row=0, column=1, rowspan=4, sticky="ne")
     canvases = {}
-    for row, (key, title) in enumerate((("stt", "Сервер речи"), ("tailscale", "Tailscale"), ("subtitles", "Субтитры"))):
-        tk.Label(services, text=title, fg="#9ad8e5", bg="#10131e", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, sticky="e", padx=(0, 12), pady=3)
+    for row, (key, title) in enumerate((("stt", f"Сервер речи · {SERVER_VERSION}"), ("tailscale", "Tailscale"), ("subtitles", "Связь субтитров"), ("subtitles-version", "subtitles.plugin.js"), ("microphone-version", "microphone.plugin.js"))):
+        tk.Label(services, text=title, fg="#9ad8e5", bg="#10131e", font=("Segoe UI", 9, "bold")).grid(row=row, column=0, sticky="e", padx=(0, 12), pady=3)
         canvas = tk.Canvas(services, width=280, height=26, bg="#10131e", highlightthickness=0)
         canvas.grid(row=row, column=1, pady=3)
         canvases[key] = canvas
@@ -1238,18 +1263,22 @@ def run_dashboard():
         canvas = canvases[key]
         canvas.delete("all")
         foreground, background, border = {
-            "active": ("#80dec0", "#16302b", "#305b50"),
+            "active": ("#85dfaa", "#14291e", "#2ea043"),
+            "outdated": ("#e8bf69", "#302818", "#d29922"),
             "inactive": ("#ffa2b0", "#331e2b", "#694052"),
             "unknown": ("#e8bf69", "#302818", "#6e5930"),
         }.get(state, ("#b6c2d8", "#222939", "#49516a"))
         canvas.create_polygon(13, 1, 267, 1, 279, 1, 279, 13, 279, 25, 267, 25, 13, 25, 1, 25, 1, 13, 1, 1, smooth=True, fill=background, outline=border)
-        canvas.create_oval(10, 11, 14, 15, fill=foreground, outline="")
+        if state == "outdated":
+            canvas.create_polygon(9, 16, 16, 16, 12.5, 9, fill=foreground, outline="")
+        else:
+            canvas.create_oval(10, 11, 14, 15, fill=foreground, outline="")
         canvas.create_text(22, 13, text=text, anchor="w", fill=foreground, font=("Segoe UI", 9), width=250)
 
     for key in canvases:
         paint(key, "unknown", "Проверка…")
     feedback = tk.StringVar(value="")
-    feedback_label = tk.Label(content, textvariable=feedback, fg="#e8bf69", bg="#10131e", font=("Segoe UI", 8), anchor="w")
+    feedback_label = tk.Label(content, textvariable=feedback, fg="#e8bf69", bg="#10131e", font=("Segoe UI", 8), anchor="w", wraplength=840, justify="left")
     feedback_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
     footer = tk.Frame(root, bg="#10131e")
     footer.pack(fill="x", padx=20, pady=(0, 10))
@@ -1258,6 +1287,7 @@ def run_dashboard():
     pending = None
     next_refresh = 0.0
     closed = False
+    poll_timer = None
     startup_enabled = None
 
     def refresh():
@@ -1267,29 +1297,30 @@ def run_dashboard():
         next_refresh = 0.0
 
     button_options = {"bg": "#1c2435", "fg": "#b8cbe4", "activebackground": "#2b3851", "activeforeground": "#ffffff", "relief": "flat", "bd": 0, "padx": 10, "pady": 4, "cursor": "hand2", "font": ("Segoe UI", 9)}
-    release_url = [None]
+    updates_available = [False]
     update_pending = None
     next_update = 0.0
 
+    install_pending = None
+
     def open_release():
-        if release_url[0]:
-            try:
-                run_component_update(install=True)
-                release_button.configure(state="disabled")
-                feedback.set("Обновление загружается. Сервер перезапустится автоматически.")
-            except (OSError, RuntimeError) as error:
-                feedback.set(str(error)[:120])
+        nonlocal install_pending
+        if updates_available[0] and install_pending is None:
+            release_button.configure(state="disabled")
+            feedback.set("Скачивание и проверка обновлений… Актуальные компоненты будут пропущены.")
+            feedback_label.configure(fg="#93c8ff")
+            install_pending = executor.submit(run_component_update, True)
 
     release_button = tk.Button(footer, text="Установить", command=open_release, state="disabled", **button_options)
     release_button.pack(side="right")
-    tk.Button(footer, text="Обновить ↻", command=refresh, **button_options).pack(side="right", padx=(0, 6))
+    tk.Button(footer, text="Проверить ↻", command=refresh, **button_options).pack(side="right", padx=(0, 6))
 
     def read_status():
         with urllib.request.urlopen(f"http://127.0.0.1:{SUBTITLE_PORT}/status", timeout=6) as response:
             return json.load(response)
 
     def poll():
-        nonlocal pending, next_refresh, startup_enabled, update_pending, next_update
+        nonlocal pending, next_refresh, startup_enabled, update_pending, next_update, install_pending, poll_timer
         if closed:
             return
         if pending is not None and pending.done():
@@ -1298,7 +1329,7 @@ def run_dashboard():
                 statuses = data["services"]
                 startup = statuses.get("startup", {})
                 startup_enabled = startup.get("state") == "active"
-                for key in canvases:
+                for key in ("stt", "tailscale", "subtitles"):
                     value = statuses[key]
                     text = value["text"]
                     if key == "stt":
@@ -1308,7 +1339,7 @@ def run_dashboard():
                     feedback.set(data["message"][:120])
                     feedback_label.configure(fg="#e8bf69")
             except Exception as error:
-                for key in canvases:
+                for key in ("stt", "tailscale", "subtitles"):
                     paint(key, "inactive" if key == "stt" else "unknown", "Нет связи с сервером" if key == "stt" else "Не удалось проверить")
                 if isinstance(error, urllib.error.HTTPError):
                     message = f"Сервер ответил с ошибкой HTTP {error.code}. Перезапустите сервер. Подробнее: stt_server.log"
@@ -1320,23 +1351,39 @@ def run_dashboard():
         if update_pending is not None and update_pending.done():
             try:
                 update = update_pending.result()
-                release_url[0] = update.get("url") if update.get("state") == "active" else None
-                release_button.configure(state="normal" if release_url[0] else "disabled")
+                updates_available[0] = update.get("state") == "active"
+                release_button.configure(state="normal" if updates_available[0] and install_pending is None else "disabled")
+                for name in ("subtitles", "microphone"):
+                    state, text = component_badge(update.get("components", {}).get(name, {}))
+                    paint(name + "-version", state, text)
                 feedback.set(update.get("message", "")[:120])
                 feedback_label.configure(fg="#80dec0" if update.get("state") == "inactive" else "#93c8ff" if update.get("state") == "active" else "#e8bf69")
             except Exception as error:
                 feedback.set(f"Обновления: {error}"[:120])
             update_pending = None
             next_update = time.monotonic() + UPDATE_CHECK_TTL
-        if update_pending is None and time.monotonic() >= next_update:
+        if install_pending is not None and install_pending.done():
+            try:
+                install_pending.result()
+                feedback.set("Обновление установлено. Если плагин не перезагрузился, выключите и включите его.")
+                feedback_label.configure(fg="#85dfaa")
+            except Exception:
+                logging.exception("Component update failed")
+                feedback.set("Обновление не установлено. Проверьте сеть и повторите. Подробнее: stt_server.log")
+                feedback_label.configure(fg="#e8bf69")
+            install_pending = None
+            next_update = 0.0
+        if update_pending is None and install_pending is None and time.monotonic() >= next_update:
             update_pending = executor.submit(check_for_update, True)
         if pending is None and time.monotonic() >= next_refresh:
             pending = executor.submit(read_status)
-        root.after(200, poll)
+        poll_timer = root.after(200, poll)
 
     def close():
         nonlocal closed
         closed = True
+        if poll_timer is not None:
+            root.after_cancel(poll_timer)
         executor.shutdown(wait=False, cancel_futures=True)
         root.destroy()
 
