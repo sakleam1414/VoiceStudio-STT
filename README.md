@@ -24,7 +24,7 @@ Python не нужен для готового EXE. EXE содержит Vosk; �
 `VERSION.json` — единственное место, где задаются версии релиза и компонентов. Пример следующего обновления только Microphone:
 
 ```powershell
-python tools/release.py --release 1.5.1 --microphone 2.5.0
+python tools/release.py --release 1.5.3 --microphone 2.5.0
 ```
 
 Скрипт сам изменит `@version` и версию в интерфейсе Microphone. Для сервера используйте `--server`, для Subtitles — `--subtitles`. Меняется номер вместе с исправленным кодом. Один номер без нового кода не добавляет исправлений.
@@ -35,11 +35,11 @@ python tools/release.py --release 1.5.1 --microphone 2.5.0
 git add .
 git commit -m "Update Microphone"
 git push origin main
-git tag v1.5.1
-git push origin v1.5.1
+git tag v1.5.3
+git push origin v1.5.3
 ```
 
-GitHub Actions на Windows соберёт EXE, ZIP, отдельные файлы и `update-manifest.json`, затем опубликует Release. У клиентов будет отображаться `Microphone 2.4.0 → 2.5.0`; версии остальных компонентов не меняются. Публикация обновления — отправка тега, она не происходит при обычном редактировании файла.
+GitHub Actions на Windows соберёт EXE, ZIP, отдельные файлы и `update-manifest.json`, затем опубликует Release. У клиентов будет отображаться `Microphone 2.4.1 → 2.5.0`; версии остальных компонентов не меняются. Публикация обновления — отправка тега, она не происходит при обычном редактировании файла.
 
 Для локальной сборки:
 
