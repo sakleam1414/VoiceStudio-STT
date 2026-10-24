@@ -52,7 +52,7 @@ async def main():
     with patch.object(server,'get_radmin_self_addresses',return_value=['26.10.0.1']),patch.object(server,'get_tailscale_peer_records',side_effect=RuntimeError('Tailscale absent')):
         code,data=await request('/network')
         assert code==200 and data['addresses']==['26.10.0.1'] and data['networks']==[{'address':'26.10.0.1','vpn':'radmin'}],data
-        assert (await request('/ping','26.10.0.2','26.10.0.1'))[0]==200
+        assert (await request('/ping','26.10.0.2','0.0.0.0'))[0]==200
         assert (await request('/ping','26.10.0.2','192.168.1.2'))[0]==403
         assert (await request('/ping','8.8.8.8','26.10.0.1'))[0]==403
         for path in ['/status','/register','/inbox','/network','/peers']:
