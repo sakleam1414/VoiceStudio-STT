@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.6.0"
+SERVER_VERSION = "1.6.1"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -91,7 +91,7 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.6.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.6.1</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');
@@ -1254,10 +1254,14 @@ def run_dashboard():
                 startup_button.configure(text="Отключить автозагрузку" if startup_enabled else "Включить автозагрузку", state="normal")
                 if data.get("message"):
                     feedback.set(data["message"][:120])
-            except Exception:
+            except Exception as error:
                 for key in canvases:
-                    paint(key, "inactive", "Нет связи с сервером")
-                feedback.set((startup_error or "Ожидание запуска сервера… Подробнее: stt_server.log")[:120])
+                    paint(key, "inactive" if key == "stt" else "unknown", "Нет связи с сервером" if key == "stt" else "Не удалось проверить")
+                if isinstance(error, urllib.error.HTTPError):
+                    message = f"Сервер ответил с ошибкой HTTP {error.code}. Перезапустите сервер. Подробнее: stt_server.log"
+                else:
+                    message = startup_error or "Ожидание запуска сервера… Подробнее: stt_server.log"
+                feedback.set(message[:120])
             pending = None
             next_refresh = time.monotonic() + 10
         if update_pending is not None and update_pending.done():
@@ -1402,6 +1406,7 @@ def main():
     model = None
     model_id_active = None
     model_engine = "vosk"
+    service_thread = None
     owns_server = acquire_server_mutex()
     if owns_server:
         load_runtime()
@@ -1422,9 +1427,17 @@ def main():
         if args.background or args.web:
             run_services()
         else:
-            threading.Thread(target=run_services, name="stt-server", daemon=False).start()
+            service_thread = threading.Thread(target=run_services, name="stt-server", daemon=False)
+            service_thread.start()
     if not args.background and not args.web:
-        run_dashboard()
+        try:
+            run_dashboard()
+        finally:
+            if service_thread is not None:
+                # SystemExit starts concurrent.futures' global shutdown before Python
+                # waits for non-daemon threads. Keep main alive while services use
+                # asyncio.to_thread, including after the user closes the window.
+                service_thread.join()
     return 0
 
 

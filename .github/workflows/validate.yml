@@ -25,3 +25,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: ./tools/test-updater.ps1
         shell: powershell
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r stt_requirements.txt
+      - run: python tools/test-window-lifetime.py
