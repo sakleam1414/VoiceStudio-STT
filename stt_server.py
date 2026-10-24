@@ -40,7 +40,7 @@ WAV2VEC_CHUNK_BYTES = 5 * 16000 * 2
 GIGAAM_CHUNK_BYTES = 5 * 16000 * 2
 MMS_CHUNK_BYTES = 5 * 16000 * 2
 NEMO_CHUNK_BYTES = 5 * 16000 * 2
-SERVER_VERSION = "1.5.0"
+SERVER_VERSION = "1.5.1"
 DEFAULT_UPDATE_REPOSITORY = "sakleam1414/VoiceStudio-STT"
 UPDATE_CONFIG_FILE = APP_DIR / "stt_update.json"
 UPDATE_CHECK_TTL = 6 * 60 * 60
@@ -91,7 +91,7 @@ button:hover{background:#2d3a58}button:focus-visible{outline:2px solid #96b9ff;o
   </section>
  </div>
  <p id="message" role="status" aria-live="polite"></p>
- <footer><span id="version">Версия 1.5.0</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
+ <footer><span id="version">Версия 1.5.1</span><div class="actions"><span id="updated">Подключение…</span><button id="refresh" type="button">Обновить ↻</button></div></footer>
 </main>
 <script>
 const refreshButton=document.getElementById('refresh');

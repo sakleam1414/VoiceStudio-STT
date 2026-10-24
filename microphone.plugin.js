@@ -1,7 +1,7 @@
 /**
  * @name Microphone
  * @author Codex
- * @version 2.4.0
+ * @version 2.4.1
  * @description Локальная передача микрофона в Vosk, Whisper, wav2vec2 или GigaAM и отображение распознанной речи в субтитрах.
  */
 const fs = require("fs");
@@ -277,7 +277,7 @@ module.exports = class Microphone {
                 Начать распознавание
             </button>
             <button type="button" class="mic-btn" id="mic-update-btn">Проверить обновление</button>
-            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.4.0</span></div>
+            <div class="mic-footer"><span>Локальное распознавание</span><span>Microphone · 2.4.1</span></div>
         `;
 
         const savedPos = BdApi.Data.load("Microphone", "panelPosition");

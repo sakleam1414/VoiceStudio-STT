@@ -20,9 +20,9 @@ function Get-ComponentVersion([string]$Root, [string]$Name) {
 
 function Get-CheckedFiles($Manifest, [string]$Name) {
     $allowed = @{
-        server=@('stt_server.py','stt_server.exe','stt_server.bat','stt_requirements.txt','stt_install.bat')
-        microphone=@('microphone.plugin.js','vosk_models.json','stt_engines.json')
-        subtitles=@('subtitles.plugin.js')
+        server=@('stt_server.py','stt_server.exe','stt_server.bat','stt_requirements.txt','stt_install.bat','stt_updater.ps1','stt_updates.js','stt_update.json')
+        microphone=@('microphone.plugin.js','vosk_models.json','stt_engines.json','stt_updater.ps1','stt_updates.js','stt_update.json')
+        subtitles=@('subtitles.plugin.js','stt_updater.ps1','stt_updates.js','stt_update.json')
     }
     if ($Manifest.schema -ne 1) { throw 'Unsupported update manifest' }
     $entry = $Manifest.components.$Name

@@ -9,9 +9,9 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPONENTS = {
-    'server': ['stt_server.py', 'stt_server.exe', 'stt_server.bat', 'stt_requirements.txt', 'stt_install.bat'],
-    'microphone': ['microphone.plugin.js', 'vosk_models.json', 'stt_engines.json'],
-    'subtitles': ['subtitles.plugin.js'],
+    'server': ['stt_server.py', 'stt_server.exe', 'stt_server.bat', 'stt_requirements.txt', 'stt_install.bat', 'stt_updater.ps1', 'stt_updates.js', 'stt_update.json'],
+    'microphone': ['microphone.plugin.js', 'vosk_models.json', 'stt_engines.json', 'stt_updater.ps1', 'stt_updates.js', 'stt_update.json'],
+    'subtitles': ['subtitles.plugin.js', 'stt_updater.ps1', 'stt_updates.js', 'stt_update.json'],
 }
 SUPPORT = ['stt_updater.ps1', 'stt_updates.js', 'STT_README.txt', 'stt_update.json']
 

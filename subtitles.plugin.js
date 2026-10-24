@@ -1,7 +1,7 @@
 /**
  * @name Subtitles
  * @author Codex
- * @version 1.8.0
+ * @version 1.8.1
  * @description Чистые субтитры. ЛКМ — окно субтитров, ПКМ — участники и автоматический поиск устройств.
  */
 const SUBTITLES_UPDATE_CHECK_TTL = 6 * 60 * 60 * 1000;
@@ -528,7 +528,7 @@ module.exports = class Subtitles {
         const updates = document.createElement("button");
         updates.type = "button";
         updates.className = "subtitles-network-refresh";
-        updates.textContent = "Обновление Subtitles · 1.8.0";
+        updates.textContent = "Обновление Subtitles · 1.8.1";
         updates.onclick = () => require("./stt_updates").show(__dirname, "subtitles");
         this.participantMenu.append(updates);
 
