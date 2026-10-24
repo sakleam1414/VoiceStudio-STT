@@ -6,6 +6,9 @@ param(
     [switch]$LibraryOnly
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+# Electron or PowerShell 7 can pass a module path that hides Windows PowerShell 5 builtins.
+$env:PSModulePath = (Join-Path $PSHOME 'Modules') + [IO.Path]::PathSeparator + $env:PSModulePath
 
 function Get-ComponentVersion([string]$Root, [string]$Name) {
     $file = @{server='stt_server.py';microphone='microphone.plugin.js';subtitles='subtitles.plugin.js'}[$Name]
