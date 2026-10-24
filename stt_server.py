@@ -177,7 +177,8 @@ def is_vpn_source(address, local_address=None):
         return True
     try:
         ip = ipaddress.ip_address(address)
-        return ip.version == 4 and ip in ipaddress.ip_network("26.0.0.0/8") and bool(get_radmin_self_addresses())
+        return (ip.version == 4 and ip in ipaddress.ip_network("26.0.0.0/8")
+                and str(local_address) in get_radmin_self_addresses())
     except (ValueError, TypeError):
         return False
 
